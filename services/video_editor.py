@@ -44,7 +44,11 @@ PREPROCESS_IF_SHORTER_THAN_SECONDS = 1.5
 DEFAULT_PREPROCESS_FPS = "30"
 DEFAULT_PREPROCESS_RESOLUTION = "1280x720"
 
-def merge_videos_and_replace_audio(relative_raw_clips_path_from_db: str, recipe_db_id: str, recipe_name_orig: str):
+# Forward declare BackgroundTasks for type hinting if not already imported
+from fastapi import BackgroundTasks
+from services import gemini # Ensure gemini service is importable
+
+def merge_videos_and_replace_audio(background_tasks: BackgroundTasks, relative_raw_clips_path_from_db: str, recipe_db_id: str, recipe_name_orig: str):
     # relative_raw_clips_path_from_db is the path stored in db.json, relative to TEMP_PROCESSING_BASE_DIR.
     absolute_raw_clips_local_path = os.path.join(TEMP_PROCESSING_BASE_DIR, relative_raw_clips_path_from_db)
     print(f"BACKGROUND TASK: VideoEditor: Starting for {recipe_db_id} ({recipe_name_orig}). Relative raw clips path: '{relative_raw_clips_path_from_db}', Absolute: '{absolute_raw_clips_local_path}'")
@@ -215,7 +219,20 @@ def merge_videos_and_replace_audio(relative_raw_clips_path_from_db: str, recipe_
         
         # The calling background task manager in routes/upload.py 
         # will use trigger_next_background_task if this step was successful.
-        # This function itself no longer returns a path directly for chaining.
+        
+        # If merge was successful, automatically trigger metadata generation
+        if current_db_status_on_exit == "MERGED":
+            print(f"BACKGROUND TASK: VideoEditor: Merge successful for {recipe_db_id}. Automatically triggering metadata generation.")
+            # Ensure this call matches the signature of gemini.generate_youtube_metadata_from_video_info
+            # It needs recipe_db_id, recipe_name_orig, and optionally custom_prompt_str (None for default)
+            update_recipe_status(recipe_id=recipe_db_id, name=recipe_name_orig, status="GENERATING_METADATA") # Set status before adding task
+            background_tasks.add_task(
+                gemini.generate_youtube_metadata_from_video_info,
+                recipe_db_id=recipe_db_id,
+                recipe_name_orig=recipe_name_orig,
+                custom_prompt_str=None # Use default prompt
+            )
+            print(f"BACKGROUND TASK: VideoEditor: Added metadata generation task for {recipe_db_id} to background.")
 
 # __main__ block for testing would need significant rework to use GDrive for DB and outputs.
 # For now, focusing on the main function logic.

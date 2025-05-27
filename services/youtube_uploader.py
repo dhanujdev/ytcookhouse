@@ -14,15 +14,19 @@ import subprocess # Only for __main__ test dummy video
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from config import (
     GOOGLE_AUTH_METHOD,
-    GOOGLE_SERVICE_ACCOUNT_INFO
-    # GOOGLE_SERVICE_ACCOUNT_FILE_PATH, # No longer used
-    # GOOGLE_CLIENT_SECRET_PATH_CONFIG, # No longer used
-    # MERGED_DIR as LOCAL_TEMP_MERGED_DIR # For temp downloaded video storage
+    GOOGLE_SERVICE_ACCOUNT_INFO,
+    # ---- Added for Refactoring ----
+    YOUTUBE_SERVICE_CLIENT, # Shared client instance
+    APP_STARTUP_STATUS      # For updating status during checks
+    # -----------------------------
 )
 from utils import update_recipe_status, get_recipe_status # get_recipe_status for GDrive ID
 from services import gdrive # Import gdrive service
 
-SCOPES_YOUTUBE = ["https://www.googleapis.com/auth/youtube.upload"]
+SCOPES_YOUTUBE = [
+    "https://www.googleapis.com/auth/youtube.upload", 
+    "https://www.googleapis.com/auth/youtube.readonly" # Added for channel list checks
+]
 OAUTH_TOKEN_YOUTUBE_PATH = os.path.join(os.path.dirname(__file__), '..', 'token_youtube.json')
 API_SERVICE_NAME = 'youtube'
 API_VERSION = 'v3'
@@ -30,28 +34,78 @@ API_VERSION = 'v3'
 class YouTubeUploaderError(Exception):
     pass
 
-def get_youtube_service():
+def get_youtube_service(bypass_shared_client=False):
+    """
+    Returns a YouTube API service client.
+    Uses a shared client instance after initial successful creation unless bypass_shared_client is True.
+    """
+    if not bypass_shared_client and YOUTUBE_SERVICE_CLIENT:
+        # print("YouTube Service: Returning shared client.") # Optional: for debugging
+        return YOUTUBE_SERVICE_CLIENT
+
+    print("YouTube Service: Attempting to create new client...")
     creds = None
     if GOOGLE_AUTH_METHOD == "SERVICE_ACCOUNT_INDIVIDUAL_FIELDS" and GOOGLE_SERVICE_ACCOUNT_INFO:
         print(f"YouTube Auth: Attempting with Service Account (Individual Fields).")
         try: 
             creds = ServiceAccountCredentials.from_service_account_info(GOOGLE_SERVICE_ACCOUNT_INFO, scopes=SCOPES_YOUTUBE)
             print(f"YouTube Auth: Successfully obtained credentials via Service Account (Individual Fields).")
-        except Exception as e: 
+        except Exception as e:
+            if bypass_shared_client: APP_STARTUP_STATUS["youtube_error_details"] = f"SA Cred error: {e}"
             raise YouTubeUploaderError(f"YouTube Auth: SA Individual Fields cred error: {e}")
     else: 
         msg = "YouTube Auth: SERVICE_ACCOUNT_INDIVIDUAL_FIELDS method not configured or GOOGLE_SERVICE_ACCOUNT_INFO missing in config.py."
         print(f"ERROR: {msg}")
+        if bypass_shared_client: APP_STARTUP_STATUS["youtube_error_details"] = msg
         raise YouTubeUploaderError(msg)
     
     if not creds: # Safeguard
-        raise YouTubeUploaderError("YouTube Auth: Failed to obtain credentials.")
+        msg = "YouTube Auth: Failed to obtain credentials."
+        if bypass_shared_client: APP_STARTUP_STATUS["youtube_error_details"] = msg
+        raise YouTubeUploaderError(msg)
 
     try: 
         service = build(API_SERVICE_NAME, API_VERSION, credentials=creds)
-        print(f"BACKGROUND TASK: YouTube Auth: Using Service Account (Individual Fields). Client created.")
+        print(f"YouTube Auth: Service client created successfully.") # Changed from BACKGROUND TASK for clarity
+        
+        if YOUTUBE_SERVICE_CLIENT is None or bypass_shared_client:
+            import config # Import config directly to modify its attributes
+            config.YOUTUBE_SERVICE_CLIENT = service
+            print("YouTube Service: New client stored as shared client.")
         return service
-    except Exception as e: raise YouTubeUploaderError(f"Failed to build YouTube service: {e}")
+    except Exception as e: 
+        if bypass_shared_client: APP_STARTUP_STATUS["youtube_error_details"] = f"Failed to build service: {e}"
+        raise YouTubeUploaderError(f"Failed to build YouTube service: {e}")
+
+def check_youtube_service(service_client) -> bool:
+    """
+    Performs a basic check of the YouTube service client using channels.list(mine=True).
+    Returns True if successful, False otherwise.
+    Updates APP_STARTUP_STATUS with error details on failure.
+    """
+    if not service_client:
+        APP_STARTUP_STATUS["youtube_error_details"] = "Service client is None."
+        return False
+    try:
+        print("YouTube Check: Attempting to list own channel details (channels.list mine=True)...")
+        test_request = service_client.channels().list(
+            part="snippet", # Using minimal part for a simple check
+            mine=True
+        )
+        test_response = test_request.execute()
+        print(f"YouTube Check: channels.list successful. Response: {test_response}")
+        return True
+    except HttpError as he:
+        error_content_test = he.content.decode('utf-8') if he.content else 'No details.'
+        error_msg = f"YouTube Check: API HttpError: {he.resp.status} - {error_content_test}"
+        print(f"ERROR: {error_msg}")
+        APP_STARTUP_STATUS["youtube_error_details"] = error_msg
+        return False
+    except Exception as e:
+        error_msg = f"YouTube Check: Unexpected error: {str(e)}"
+        print(f"ERROR: {error_msg}")
+        APP_STARTUP_STATUS["youtube_error_details"] = error_msg
+        return False
 
 def upload_video_to_youtube(metadata: dict, 
                             privacy_status: str = "private", 
@@ -95,6 +149,22 @@ def upload_video_to_youtube(metadata: dict,
             raise YouTubeUploaderError("Video title missing in metadata.")
 
         youtube_service = get_youtube_service()
+
+        # Test API call to list channels
+        try:
+            print("BACKGROUND TASK: YouTube: Attempting a test API call (list channels)...")
+            test_request = youtube_service.channels().list(
+                part="snippet,contentDetails,statistics",
+                mine=True
+            )
+            test_response = test_request.execute()
+            print(f"BACKGROUND TASK: YouTube: Test API call successful: {test_response}")
+        except HttpError as he:
+            error_content_test = he.content.decode('utf-8') if he.content else 'No details.'
+            print(f"BACKGROUND TASK: YouTube: Test API call FAILED: {error_content_test}")
+            # Optionally, re-raise or handle differently if this test fails
+            # For now, let it proceed to the upload attempt to see if the error is consistent
+        
         request_body = {
             'snippet': {'title': metadata.get('title'), 'description': metadata.get('description', ''),
                         'tags': metadata.get('tags', []), 'categoryId': '22'},
@@ -134,12 +204,30 @@ def upload_video_to_youtube(metadata: dict,
             )
             print(f"BACKGROUND TASK: YouTube: Final DB status for {recipe_db_id_for_status_update} to '{current_db_status_on_exit}'. URL: {youtube_url_on_success if youtube_url_on_success else 'N/A'}, Err: {error_message_on_exit if error_message_on_exit else 'None'}")
 
-        if local_temp_video_path and os.path.exists(local_temp_video_path):
-            try:
-                os.remove(local_temp_video_path)
-                print(f"BACKGROUND TASK: YouTube: Cleaned local temp video: {local_temp_video_path}")
-            except Exception as e_clean:
-                print(f"BACKGROUND TASK: YouTube: WARN Failed to clean local temp video {local_temp_video_path}: {e_clean}")
+        # Attempt to clean up the local temporary video file
+        if local_temp_video_path:
+            if 'media_file' in locals() and media_file is not None:
+                # If using a context manager or if media_file has a close() method:
+                # try:
+                #     if hasattr(media_file, '_stream') and hasattr(media_file._stream, 'close'):
+                #         media_file._stream.close()
+                #     elif hasattr(media_file, 'close'): # Hypothetical
+                #          media_file.close()
+                # except Exception as e_close:
+                #     print(f"BACKGROUND TASK: YouTube: Minor error trying to close media_file stream: {e_close}")
+                del media_file # Remove reference to MediaFileUpload object
+
+            if os.path.exists(local_temp_video_path):
+                try:
+                    # Add a small delay before attempting to delete
+                    import time
+                    time.sleep(1) # Wait 1 second
+                    os.remove(local_temp_video_path)
+                    print(f"BACKGROUND TASK: YouTube: Cleaned local temp video: {local_temp_video_path}")
+                except Exception as e_clean:
+                    print(f"BACKGROUND TASK: YouTube: WARN Failed to clean local temp video {local_temp_video_path}: {e_clean}")
+            else:
+                print(f"BACKGROUND TASK: YouTube: Local temp video {local_temp_video_path} already deleted or was not created.")
         
     # No explicit return needed by background task manager in routes if it only checks DB status
 

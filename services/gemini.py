@@ -5,13 +5,118 @@ import tempfile
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 # Use METADATA_TEMP_DIR which is the absolute path from config
-from config import METADATA_TEMP_DIR, GEMINI_API_KEY, GOOGLE_DRIVE_APP_DATA_FOLDER_NAME 
+from config import (
+    METADATA_TEMP_DIR, 
+    GEMINI_API_KEY, 
+    GOOGLE_DRIVE_APP_DATA_FOLDER_NAME,
+    # ---- Added for Refactoring ----
+    GEMINI_SERVICE_CLIENT, # Shared client/model instance
+    APP_STARTUP_STATUS     # For updating status during checks
+    # -----------------------------
+)
 from utils import update_recipe_status, get_recipe_status # get_recipe_status for fetching GDrive ID
 from services import gdrive # Import gdrive service
 import google.generativeai as genai
 
 class GeminiServiceError(Exception):
     pass
+
+# Store the model name globally within the module or fetch from config if it can vary
+DEFAULT_GEMINI_MODEL_NAME = "gemini-1.5-flash"
+
+def get_gemini_model(model_name: str = DEFAULT_GEMINI_MODEL_NAME, bypass_shared_client=False):
+    """
+    Configures genai and returns an instance of GenerativeModel.
+    Uses a shared model instance after initial successful creation unless bypass_shared_client is True.
+    """
+    if not bypass_shared_client and GEMINI_SERVICE_CLIENT:
+        # print("Gemini Service: Returning shared model instance.") # Optional for debugging
+        return GEMINI_SERVICE_CLIENT
+    
+    print(f"Gemini Service: Attempting to configure API and get model: {model_name}...")
+    if not GEMINI_API_KEY or GEMINI_API_KEY == "...":
+        msg = "Gemini Service Error: GEMINI_API_KEY is not configured in config.py."
+        print(f"ERROR: {msg}")
+        if bypass_shared_client: APP_STARTUP_STATUS["gemini_error_details"] = msg
+        raise GeminiServiceError(msg)
+    
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+        print("Gemini Service: genai.configure called successfully.")
+        model = genai.GenerativeModel(model_name)
+        print(f"Gemini Service: GenerativeModel instance for '{model_name}' created.")
+        
+        if GEMINI_SERVICE_CLIENT is None or bypass_shared_client:
+            import config # Import config directly to modify its attributes
+            config.GEMINI_SERVICE_CLIENT = model
+            print("Gemini Service: New model instance stored as shared client.")
+        return model
+    except Exception as e:
+        msg = f"Gemini Service Error: Failed to configure or get model '{model_name}': {str(e)}"
+        print(f"ERROR: {msg}")
+        if bypass_shared_client: APP_STARTUP_STATUS["gemini_error_details"] = msg
+        raise GeminiServiceError(msg)
+
+def check_gemini_service() -> bool:
+    """
+    Performs a basic check of the Gemini service by trying to list available models
+    and ensuring the default model is supported.
+    Returns True if successful, False otherwise.
+    Updates APP_STARTUP_STATUS with error details on failure.
+    """
+    print("Gemini Check: Attempting to list models and verify default model support...")
+    if not GEMINI_API_KEY or GEMINI_API_KEY == "...":
+        error_msg = "Gemini Check: GEMINI_API_KEY is not configured."
+        print(f"ERROR: {error_msg}")
+        APP_STARTUP_STATUS["gemini_error_details"] = error_msg
+        return False
+    try:
+        genai.configure(api_key=GEMINI_API_KEY) # Ensure API key is configured for list_models
+        
+        model_found = False
+        # Check if the specific model we use is listed as supported by this API key
+        # The model name for listing might be different from the one used for GenerativeModel instance
+        # e.g. list_models might show 'gemini-1.5-flash-latest' or similar.
+        # We are checking if ANY model containing parts of our DEFAULT_GEMINI_MODEL_NAME exists.
+        # A more robust check would be to use the exact model name if known for list_models response.
+        models_listed_count = 0
+        supported_model_name_to_check = DEFAULT_GEMINI_MODEL_NAME # or specific name like 'gemini-1.5-flash-001'
+        
+        for m in genai.list_models():
+            models_listed_count += 1
+            # print(f"DEBUG Gemini Check: Found model {m.name}") # For debugging
+            if supported_model_name_to_check in m.name: # Check if our default model is in the supported list
+                # More precise check if `m.supported_generation_methods` includes 'generateContent' for this model
+                if 'generateContent' in m.supported_generation_methods:
+                    model_found = True
+                    # print(f"Gemini Check: Model '{m.name}' supports 'generateContent'.") # Debug
+                    # break # Found a suitable model
+            # Check for the exact model name we use to instantiate GenerativeModel
+            if DEFAULT_GEMINI_MODEL_NAME == m.name and 'generateContent' in m.supported_generation_methods:
+                model_found = True
+                print(f"Gemini Check: Exact model '{DEFAULT_GEMINI_MODEL_NAME}' found and supports 'generateContent'.")
+                break
+
+        if models_listed_count == 0:
+            error_msg = "Gemini Check: genai.list_models() returned no models. Check API key and permissions."
+            print(f"ERROR: {error_msg}")
+            APP_STARTUP_STATUS["gemini_error_details"] = error_msg
+            return False
+            
+        if model_found:
+            print(f"Gemini Check: Successfully listed {models_listed_count} models and confirmed support for a model like '{DEFAULT_GEMINI_MODEL_NAME}'. Service is operational.")
+            return True
+        else:
+            error_msg = f"Gemini Check: Default model '{DEFAULT_GEMINI_MODEL_NAME}' or a variant supporting generateContent not found in the {models_listed_count} listed models."
+            print(f"ERROR: {error_msg}")
+            APP_STARTUP_STATUS["gemini_error_details"] = error_msg
+            return False
+
+    except Exception as e:
+        error_msg = f"Gemini Check: Error during model listing or check: {str(e)}"
+        print(f"ERROR: {error_msg}")
+        APP_STARTUP_STATUS["gemini_error_details"] = error_msg
+        return False
 
 def get_default_gemini_prompt(recipe_name_orig: str, video_path_context_for_prompt: str) -> str:
     """Generates the default prompt for Gemini metadata generation, with guidance for UI customization."""
@@ -89,10 +194,12 @@ def generate_youtube_metadata_from_video_info(recipe_db_id: str, recipe_name_ori
         # print(f"BACKGROUND TASK: Gemini: (Simulated) Using video context from GDrive ID {merged_video_gdrive_id}")
         video_path_context_for_prompt = f"Google Drive File ID: {recipe_data.get('merged_video_gdrive_id', 'N/A')}"
 
-        if not GEMINI_API_KEY or GEMINI_API_KEY == "...":
-            raise GeminiServiceError("GEMINI_API_KEY is not configured.")
-        genai.configure(api_key=GEMINI_API_KEY)
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        # Get the shared model instance
+        # The DEFAULT_GEMINI_MODEL_NAME is used by get_gemini_model by default
+        model = get_gemini_model() 
+        if not model:
+            # This case should ideally be caught by startup checks, but as a safeguard:
+            raise GeminiServiceError("Failed to obtain Gemini model instance. Check startup logs.")
 
         prompt_to_use = custom_prompt_str
         if not prompt_to_use:

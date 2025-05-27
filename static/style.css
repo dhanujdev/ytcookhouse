@@ -322,4 +322,23 @@ form textarea {
     gap: var(--spacing-unit);
 }
 
+button.disabled,
+input[type="submit"].disabled,
+.button.disabled {
+    background-color: var(--color-muted-text);
+    cursor: not-allowed;
+    box-shadow: none;
+}
 
+button.disabled:hover,
+input[type="submit"].disabled:hover,
+.button.disabled:hover {
+    background-color: var(--color-muted-text); /* Keep it the same as disabled */
+}
+
+.status-line {
+    display: flex;
+    align-items: center;
+    gap: 0.5em; /* Space between badge and message */
+    margin-top: calc(var(--spacing-unit) * 0.25);
+}

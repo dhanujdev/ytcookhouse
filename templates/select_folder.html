@@ -21,52 +21,53 @@
     {% if folders %}
         <ul class="folder-list">
             {% for folder in folders %}
-            <li>
+            <li data-recipe-id="{{ folder.id }}" data-initial-status="{{ folder.status_from_db or 'New' }}">
                 <div class="folder-info">
-                    <span class="folder-name">{{ folder.display_name }}</span>
-                    {% set status_class = folder.status_from_db.lower().replace(" ", "_") if folder.status_from_db else "unknown" %}
-                    <span class="folder-status">Status: 
-                        <span class="status-badge status-{{ status_class }}">{{ folder.status_from_db or 'New / Unknown' }}</span>
-                    </span>
-                    {% if 'failed' in status_class and folder.error_message %}
-                        <p class="error" style="font-size: 0.85em; padding: 0.5em; margin-top: 0.5em;">Error: {{ folder.error_message | truncate(100) }}</p>
-                    {% endif %}
-                    {% if folder.status_from_db == 'UPLOADED_TO_YOUTUBE' and folder.youtube_url %}
+                    <span class="folder-name">{{ folder.name }}</span>
+                    {% set status_class = (folder.status_from_db or 'New').lower().replace(" ", "_").replace("/", "_") %}
+                    <div class="status-line">
+                        Status: <span class="status-badge status-{{ status_class }}" id="status-badge-{{ folder.id }}">{{ folder.status_from_db or 'New / Unknown' }}</span>
+                        <span class="status-message" id="status-message-{{ folder.id }}" style="margin-left: 10px; font-style: italic; font-size: 0.9em;"></span>
+                    </div>
+                    <div class="error-message-container" id="error-message-{{ folder.id }}" style="margin-top: 0.5em;">
+                        {% if 'failed' in status_class and folder.error_message %}
+                            <p class="error" style="font-size: 0.85em; padding: 0.5em;">Error: {{ folder.error_message | truncate(100) }}</p>
+                        {% endif %}
+                    </div>
+                    {% if folder.status_from_db and folder.status_from_db.upper() == 'UPLOADED_TO_YOUTUBE' and folder.youtube_url %}
                          <p style="font-size: 0.9em; margin-top: 0.3em;"><a href="{{ folder.youtube_url }}" target="_blank" class="button-link">View on YouTube <small>►</small></a></p>
                     {% endif %}
                 </div>
-                <div class="folder-actions">
-                    {% if folder.status_from_db is none or folder.status_from_db == 'Unknown' or folder.status_from_db == 'New' %}
+                <div class="folder-actions" id="actions-{{ folder.id }}">
+                    {% if folder.status_from_db is none or folder.status_from_db.upper() == 'UNKNOWN' or folder.status_from_db.upper() == 'NEW' %}
                         <form action="{{ url_for('fetch_clips_route') }}" method="post" style="margin:0;">
                             <input type="hidden" name="folder_id" value="{{ folder.id }}">
                             <input type="hidden" name="folder_name" value="{{ folder.name }}">
                             <button type="submit" class="button">Download & Process</button>
                         </form>
-                    {% elif folder.status_from_db == 'MERGED' %}
+                    {% elif folder.status_from_db.upper() == 'MERGED' %}
                         <a href="{{ url_for('preview_recipe_route', recipe_db_id=folder.id) }}#prompt-editor" class="button">Generate/Edit Metadata</a>
                         <a href="{{ url_for('preview_recipe_route', recipe_db_id=folder.id) }}" class="button">Preview Video Only</a>
-                    {% elif folder.status_from_db == 'READY_FOR_PREVIEW' or folder.status_from_db == 'METADATA_GENERATED' or folder.status_from_db == 'UPLOAD_FAILED' %}
+                    {% elif folder.status_from_db.upper() == 'READY_FOR_PREVIEW' or folder.status_from_db.upper() == 'METADATA_GENERATED' or folder.status_from_db.upper() == 'UPLOAD_FAILED' %}
                         <a href="{{ url_for('preview_recipe_route', recipe_db_id=folder.id) }}" class="button">Preview & Upload</a>
-                    {% elif folder.status_from_db == 'DOWNLOADED' or 'FAILED' in folder.status_from_db.upper() %}
+                    {% elif folder.status_from_db.upper() == 'DOWNLOADED' or 'FAILED' in folder.status_from_db.upper() %}
                          <form action="{{ url_for('trigger_next_step_route', recipe_id=folder.id) }}" method="post" style="margin:0; display: inline-block;">
                             <button type="submit" class="button">Retry/Trigger Next</button>
                         </form>
-                        {% if folder.status_from_db != 'DOWNLOAD_FAILED' %}
+                        {% if folder.status_from_db.upper() != 'DOWNLOAD_FAILED' %}
                         <a href="{{ url_for('preview_recipe_route', recipe_db_id=folder.id) }}" class="button">Preview (if available)</a>
                         {% endif %}
-                    {% elif folder.status_from_db == 'UPLOADED_TO_YOUTUBE' %}
+                    {% elif folder.status_from_db.upper() == 'UPLOADED_TO_YOUTUBE' %}
                         <a href="{{ url_for('preview_recipe_route', recipe_db_id=folder.id) }}" class="button">View Details</a>
                     {% else %}
-                        {# For other states, or if you want a generic trigger next #}
                         <form action="{{ url_for('trigger_next_step_route', recipe_id=folder.id) }}" method="post" style="margin:0; display: inline-block;">
                             <button type="submit" class="button">Trigger Next Step</button>
                         </form>
                          <a href="{{ url_for('preview_recipe_route', recipe_db_id=folder.id) }}" class="button">Preview (if available)</a>
                     {% endif %}
 
-                    {# Add Reset Button if not in a 'New' or initial state #}
                     {% if folder.status_from_db and folder.status_from_db.upper() != 'NEW' and folder.status_from_db.upper() != 'UNKNOWN' %}
-                        <form action="{{ url_for('reset_recipe_route', recipe_db_id=folder.id) }}" method="post" style="margin:0; display: inline-block; margin-left: 5px;" onsubmit="return confirm('Are you sure you want to reset all progress for {{ folder.display_name }}? This will set its status to New and clear associated data in the database.');">
+                        <form action="{{ url_for('reset_recipe_route', recipe_db_id=folder.id) }}" method="post" style="margin:0; display: inline-block; margin-left: 5px;" onsubmit="return confirm('Are you sure you want to reset all progress for {{ folder.name }}? This will set its status to New and clear associated data in the database.');">
                             <button type="submit" class="button" style="background-color: var(--color-error-border);">Reset</button>
                         </form>
                     {% endif %}
@@ -82,13 +83,131 @@
             <p><a href="{{ url_for('home') }}" class="button">Back to Home</a></p>
         </div>
     {% endif %}
-</div>
+</div> {# Closes div.container #}
 
 <script>
-// Optional: Add any specific JavaScript for this page if needed later.
-// The previous script for combining folder_id and folder_name into a single form
-// is no longer strictly necessary as each action is now a separate form or link
-// that includes the folder.id (recipe_db_id) directly or via hidden fields.
+document.addEventListener("DOMContentLoaded", function() {
+    const folderList = document.querySelector(".folder-list");
+    if (!folderList) return;
+
+    const recipesInProgress = new Set();
+
+    function getStatusClass(statusStr) {
+        if (!statusStr) return 'unknown';
+        return statusStr.toLowerCase().replace(/ /g, "_").replace(/\//g, "_");
+    }
+
+    function updateRecipeElement(recipeId, recipeData) {
+        const listItem = folderList.querySelector(`li[data-recipe-id='${recipeId}']`);
+        if (!listItem) return;
+
+        const statusBadge = listItem.querySelector(`#status-badge-${recipeId}`);
+        const statusMessage = listItem.querySelector(`#status-message-${recipeId}`);
+        const errorContainer = listItem.querySelector(`#error-message-${recipeId}`);
+        const actionsContainer = listItem.querySelector(`#actions-${recipeId}`);
+
+        let currentStatus = recipeData.status || 'New';
+        let statusClass = getStatusClass(currentStatus);
+        // Ensure statusText is user-friendly by replacing underscores and title-casing
+        let statusText = (recipeData.status || 'New / Unknown').replace(/_/g, " ")
+        if (statusText.split(" ").length > 1) { // Basic check for multi-word
+            statusText = statusText.toLowerCase().replace(/\b\w/g, l => l.toUpperCase());
+        } else {
+            statusText = statusText.charAt(0).toUpperCase() + statusText.slice(1).toLowerCase();
+        }
+        if (currentStatus.toUpperCase().includes("FAILED")) { // Keep FAILED prominent
+             statusText = statusText.replace("Failed", "FAILED");
+        }
+
+
+        if (statusBadge) {
+            statusBadge.textContent = statusText;
+            statusBadge.className = `status-badge status-${statusClass}`;
+        }
+        
+        if (statusMessage) {
+            if (["DOWNLOADING", "MERGING", "GENERATING_METADATA", "UPLOADING_YOUTUBE"].includes(currentStatus.toUpperCase())) {
+                recipesInProgress.add(recipeId);
+                statusMessage.textContent = "Processing...";
+            } else {
+                recipesInProgress.delete(recipeId);
+                statusMessage.textContent = "";
+            }
+        }
+
+        if (errorContainer) {
+            errorContainer.innerHTML = '';
+            if (recipeData.error_message && currentStatus.toUpperCase().includes("FAILED")) {
+                const p = document.createElement('p');
+                p.className = 'error';
+                p.style.fontSize = '0.85em';
+                p.style.padding = '0.5em';
+                p.textContent = `Error: ${recipeData.error_message.substring(0,100)}`;
+                errorContainer.appendChild(p);
+            }
+        }
+        
+        if (actionsContainer) {
+            const buttons = actionsContainer.querySelectorAll('button, a.button');
+            if (recipesInProgress.has(recipeId)) {
+                buttons.forEach(btn => { btn.disabled = true; btn.classList.add('disabled');});
+            } else {
+                buttons.forEach(btn => { btn.disabled = false; btn.classList.remove('disabled'); });
+                // TODO: Full dynamic button re-rendering based on new status for better UX
+                // This would involve removing old buttons and adding new ones based on `currentStatus`.
+                // For now, user might need to refresh to see correct context-specific buttons after a process completes.
+            }
+        }
+    }
+
+    async function fetchAllStatuses() {
+        try {
+            const response = await fetch("{{ url_for('api_get_all_recipes_status') }}");
+            if (!response.ok) {
+                console.error("Failed to fetch statuses:", response.status);
+                return;
+            }
+            const allStatuses = await response.json();
+            if (Object.keys(allStatuses).length > 0) {
+                 Object.entries(allStatuses).forEach(([recipeId, recipeData]) => {
+                    updateRecipeElement(recipeId, recipeData);
+                });
+            }
+        } catch (error) {
+            console.error("Error fetching statuses:", error);
+        }
+    }
+
+    folderList.querySelectorAll("li[data-recipe-id]").forEach(item => {
+        const recipeId = item.dataset.recipeId;
+        const initialStatus = item.dataset.initialStatus.toUpperCase();
+         if (["DOWNLOADING", "MERGING", "GENERATING_METADATA", "UPLOADING_YOUTUBE"].includes(initialStatus)) {
+            recipesInProgress.add(recipeId);
+            const statusMessage = item.querySelector(`#status-message-${recipeId}`);
+            if(statusMessage) statusMessage.textContent = "Processing...";
+        }
+    });
+
+    if (folderList.querySelectorAll("li").length > 0) { 
+        setInterval(async () => {
+            await fetchAllStatuses();
+        }, 5000); 
+        fetchAllStatuses(); 
+    }
+
+    document.querySelectorAll('.folder-actions form').forEach(form => {
+        form.addEventListener('submit', function() {
+            const listItem = form.closest('li[data-recipe-id]');
+            if (listItem) {
+                const recipeId = listItem.dataset.recipeId;
+                const statusMessage = listItem.querySelector(`#status-message-${recipeId}`);
+                if (statusMessage) statusMessage.textContent = "Requesting action...";
+                const buttons = listItem.querySelectorAll('.folder-actions button, .folder-actions a.button');
+                buttons.forEach(btn => { btn.disabled = true; btn.classList.add('disabled'); });
+            }
+        });
+    });
+});
 </script>
 
-{% endblock %}
+{% endblock %} {# Closes block content #}

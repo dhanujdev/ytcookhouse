@@ -110,3 +110,22 @@ print(f"CONFIG - GDrive Target Folder ID (Raw Clips Source): {GDRIVE_TARGET_FOLD
 print(f"CONFIG - GDrive App Data Folder Name (for DB, Merged, Metadata): {GOOGLE_DRIVE_APP_DATA_FOLDER_NAME}")
 print(f"CONFIG - Gemini API Key: {'SET' if GEMINI_API_KEY and GEMINI_API_KEY != '...' else 'NOT SET'}")
 
+# --- Shared Service Clients & Startup Status (Added for Refactoring) ---
+GDRIVE_SERVICE_CLIENT = None
+YOUTUBE_SERVICE_CLIENT = None
+GEMINI_SERVICE_CLIENT = None # Assuming you'll have one for Gemini too
+
+APP_STARTUP_STATUS = {
+    "gdrive_ready": False,
+    "gdrive_error_details": None,
+    "youtube_ready": False,
+    "youtube_error_details": None,
+    "gemini_ready": False, # Assuming Gemini check
+    "gemini_error_details": None,
+    "all_services_ready": False
+}
+
+# --- In-Memory DB Cache Configuration (Added for Refactoring) ---
+CACHED_DB_CONTENT = None
+DB_CACHE_TIMESTAMP = None 
+DB_CACHE_DURATION_SECONDS = 15 # Cache DB content for 15 seconds by default

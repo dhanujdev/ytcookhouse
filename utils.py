@@ -3,20 +3,41 @@ import os
 from datetime import datetime
 import tempfile # For temporary local db file
 
+import time # Added for cache timestamp
+
 # Assuming config.py is in the parent directory
 from config import (
     GOOGLE_DRIVE_APP_DATA_FOLDER_NAME, 
-    DB_JSON_FILENAME_ON_DRIVE
+    DB_JSON_FILENAME_ON_DRIVE,
+    # ---- Added for DB Caching ----
+    CACHED_DB_CONTENT,
+    DB_CACHE_TIMESTAMP,
+    DB_CACHE_DURATION_SECONDS
+    # -----------------------------
 )
 from services import gdrive # Import the gdrive service
 
 # DB_FILE_PATH is no longer a static local path. db.json lives on Google Drive.
 
 def load_db() -> dict:
-    """Loads the database from Google Drive. Initializes if not found or empty."""
+    """Loads the database. Tries from cache first, then Google Drive. Initializes if not found or empty."""
+    global CACHED_DB_CONTENT, DB_CACHE_TIMESTAMP # Allow modification of global cache variables
+
+    # Check cache first
+    if CACHED_DB_CONTENT and DB_CACHE_TIMESTAMP:
+        cache_age = time.time() - DB_CACHE_TIMESTAMP
+        if cache_age < DB_CACHE_DURATION_SECONDS:
+            # print(f"UTILS: Returning DB from cache (age: {cache_age:.2f}s).") # Optional: for debugging
+            return CACHED_DB_CONTENT
+        else:
+            print(f"UTILS: DB cache expired (age: {cache_age:.2f}s). Fetching from GDrive.")
+    else:
+        print("UTILS: No valid DB cache. Fetching from GDrive.")
+
+    # If cache miss or expired, load from Google Drive
     print("UTILS: Attempting to load DB from Google Drive...")
     try:
-        service = gdrive.get_gdrive_service() # Authenticate
+        service = gdrive.get_gdrive_service()
         app_data_folder_id = gdrive.get_or_create_app_data_folder_id(service=service)
         if not app_data_folder_id:
             print("UTILS: ERROR - Could not get/create app data folder on GDrive. Initializing local default DB.")
@@ -33,6 +54,9 @@ def load_db() -> dict:
                     if "recipes" not in db_data: # Basic validation
                         db_data["recipes"] = {}
                     print("UTILS: DB loaded successfully from GDrive.")
+                    # Update cache
+                    CACHED_DB_CONTENT = db_data
+                    DB_CACHE_TIMESTAMP = time.time()
                     return db_data
                 except json.JSONDecodeError as e:
                     print(f"UTILS: ERROR - Failed to decode JSON from GDrive DB file content: {e}. Initializing new DB.")
@@ -52,7 +76,9 @@ def load_db() -> dict:
         return {"recipes": {}, "last_gdrive_scan": None, "unexpected_error": str(e)}
 
 def save_db(db_content: dict):
-    """Saves the given dictionary to the database file on Google Drive."""
+    """Saves the given dictionary to the database file on Google Drive and updates the cache."""
+    global CACHED_DB_CONTENT, DB_CACHE_TIMESTAMP # Allow modification of global cache variables
+
     print("UTILS: Attempting to save DB to Google Drive...")
     try:
         service = gdrive.get_gdrive_service()
@@ -82,6 +108,10 @@ def save_db(db_content: dict):
 
         if uploaded_file_id:
             print(f"UTILS: DB saved successfully to GDrive. File ID: {uploaded_file_id}")
+            # Update cache immediately after successful save
+            CACHED_DB_CONTENT = db_content
+            DB_CACHE_TIMESTAMP = time.time()
+            print("UTILS: DB cache updated after save.")
         else:
             print("UTILS: ERROR - Failed to upload DB to GDrive.")
 

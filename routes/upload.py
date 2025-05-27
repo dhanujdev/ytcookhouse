@@ -10,7 +10,8 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from services import gdrive, video_editor, gemini, youtube_uploader
 from services.gemini import GeminiServiceError
 from services.youtube_uploader import YouTubeUploaderError
-from config import RAW_DIR, OUTPUT_DIR # Assuming OUTPUT_DIR for metadata
+# Import METADATA_TEMP_DIR instead of OUTPUT_DIR, and TEMP_PROCESSING_BASE_DIR for relative paths
+from config import TEMP_PROCESSING_BASE_DIR, RAW_DIR, METADATA_TEMP_DIR 
 from utils import update_recipe_status, get_recipe_status, get_all_recipes_from_db
 
 
@@ -54,12 +55,12 @@ def trigger_next_background_task(background_tasks: BackgroundTasks, recipe_id: s
         else:
             print(f"BACKGROUND_TRIGGER: For '{recipe_id}', relative_clips_path_from_db is None or not a string: '{relative_clips_path_from_db}'")
         
-        if relative_clips_path_from_db and path_exists: # Check relative_clips_path_from_db for truthiness too
+        if relative_clips_path_from_db and path_exists: 
             print(f"BACKGROUND_TRIGGER: Triggering MERGING for {recipe_id} using relative path '{relative_clips_path_from_db}' (resolved to '{absolute_clips_path}')")
             update_recipe_status(recipe_id=recipe_id, name=recipe_name_orig, status="MERGING")
-            # Pass the RELATIVE path to the background task. The service function will make it absolute.
-            background_tasks.add_task(video_editor.merge_videos_and_replace_audio, relative_clips_path_from_db, recipe_id, recipe_name_orig)
-            print(f"BACKGROUND_TRIGGER: MERGING task for {recipe_id} ADDED to background_tasks.")
+            # Pass background_tasks object as the first argument to the video_editor function
+            background_tasks.add_task(video_editor.merge_videos_and_replace_audio, background_tasks, relative_clips_path_from_db, recipe_id, recipe_name_orig)
+            print(f"BACKGROUND_TRIGGER: MERGING task for {recipe_id} (which includes auto-trigger for metadata) ADDED to background_tasks.")
         else:
             err_msg = f"Automated MERGE trigger for '{recipe_name_orig}' ({recipe_id}) failed. Relative path '{relative_clips_path_from_db}' (resolved to '{absolute_clips_path}', exists: {path_exists}) not valid."
             print(f"BACKGROUND_TRIGGER: ERROR - {err_msg}")
@@ -134,15 +135,16 @@ async def fetch_clips_route(background_tasks: BackgroundTasks, folder_id: str = 
     current_status_from_db = current_recipe_info.get("status") if current_recipe_info else None
 
     if current_status_from_db == "DOWNLOADED":
-        # When adding merge task, we need to pass the path that video_editor will use.
-        # video_editor will also need to be aware of TEMP_PROCESSING_BASE_DIR to resolve the relative path it gets from DB.
-        # For now, the `background_tasks.add_task` will receive the relative path stored in the DB.
-        # The `merge_videos_and_replace_audio` function itself will need to construct the absolute path.
-        relative_clips_path_from_db = current_recipe_info.get("raw_clips_path") # This is relative
+        relative_clips_path_from_db = current_recipe_info.get("raw_clips_path") 
+        if not relative_clips_path_from_db:
+            error_msg = f"Failed to get relative_clips_path_from_db for {folder_name} after download. Cannot start merge."
+            print(f"ERROR in fetch_clips_route: {error_msg}")
+            return RedirectResponse(url=f"/select_folder?error={error_msg}", status_code=303)
 
-        update_recipe_status(recipe_id=folder_id, name=folder_name, status="MERGING") # Set before adding task
-        background_tasks.add_task(video_editor.merge_videos_and_replace_audio, relative_clips_path_from_db, folder_id, folder_name)
-        msg = f"Clips for '{folder_name}' downloaded successfully. Merging started in background."
+        update_recipe_status(recipe_id=folder_id, name=folder_name, status="MERGING") 
+        # Pass background_tasks object as the first argument to the video_editor function
+        background_tasks.add_task(video_editor.merge_videos_and_replace_audio, background_tasks, relative_clips_path_from_db, folder_id, folder_name)
+        msg = f"Clips for '{folder_name}' downloaded. Full processing (merge & metadata) started."
         return RedirectResponse(url=f"/select_folder?message={msg}", status_code=303)
     else:
         # If status is not DOWNLOADED, it implies a failure during download (e.g., DOWNLOAD_FAILED)
