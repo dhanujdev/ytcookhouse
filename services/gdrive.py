@@ -308,8 +308,8 @@ if __name__ == '__main__':
 
         else:
             print("Test: No folder found to test download functionality (or no new folders)." )
-        else:
-            print("No folders listed. Check GDrive Folder ID, permissions, or API errors.")
+        # The following 'else' was duplicated and caused a syntax error.
+        # It's removed because the case of 'not folders' is handled by the 'else' above.
     except Exception as e:
         print(f"An UNEXPECTED error occurred during GDrive module test: {e}")
     print("\nGDrive Service Module testing finished.")
