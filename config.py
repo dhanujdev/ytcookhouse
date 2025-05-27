@@ -133,8 +133,20 @@ DB_CACHE_DURATION_SECONDS = 15 # Cache DB content for 15 seconds by default
 # --- YouTube OAuth User Consent Configuration ---
 # Path to the client secret file downloaded from Google Cloud Console for YouTube API (OAuth Web App)
 CLIENT_SECRET_YOUTUBE_PATH = os.path.join(APP_ROOT_DIR, "client_secret_youtube.json")
-# Path to store the user's OAuth token after they grant consent
-TOKEN_YOUTUBE_OAUTH_PATH = os.path.join(APP_ROOT_DIR, "token_youtube_oauth.json") 
+
+# --- Path to store the user's OAuth token after they grant consent (Made environment-aware) ---
+TOKEN_YOUTUBE_OAUTH_FILENAME = "token_youtube_oauth.json"
+if 'RENDER' in os.environ and os.environ.get('RENDER_INSTANCE_ID'):
+    # Ensure this path matches where your Render persistent disk is mounted and you have write permissions.
+    persistent_storage_base = "/mnt/data" 
+    APP_TOKENS_PERSIST_DIR = os.path.join(persistent_storage_base, "ytcookhouse_tokens") 
+    os.makedirs(APP_TOKENS_PERSIST_DIR, exist_ok=True)
+    TOKEN_YOUTUBE_OAUTH_PATH = os.path.join(APP_TOKENS_PERSIST_DIR, TOKEN_YOUTUBE_OAUTH_FILENAME)
+    print(f"CONFIG - Running on Render. OAuth Token Path (Persistent): {TOKEN_YOUTUBE_OAUTH_PATH}")
+else:
+    # Local development path
+    TOKEN_YOUTUBE_OAUTH_PATH = os.path.join(APP_ROOT_DIR, TOKEN_YOUTUBE_OAUTH_FILENAME)
+    print(f"CONFIG - Running Locally. OAuth Token Path: {TOKEN_YOUTUBE_OAUTH_PATH}")
 # Note: The old OAUTH_TOKEN_YOUTUBE_PATH in youtube_uploader.py might be for a different flow or can be removed/renamed.
 
 # --- General Auth Method Selection ---

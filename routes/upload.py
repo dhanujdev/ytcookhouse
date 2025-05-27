@@ -182,12 +182,21 @@ async def oauth2callback_youtube(request: Request, code: str = None, state: str 
             token_file.write(creds.to_json())
         print(f"YouTube OAuth: Token fetched and saved to {TOKEN_YOUTUBE_OAUTH_PATH}")
 
-        # Optionally, create and store the service client immediately
-        app_config.YOUTUBE_SERVICE_CLIENT = youtube_uploader.create_youtube_service(redirect_uri=None) # Uses the new token
-        app_config.APP_STARTUP_STATUS["youtube_ready"] = True
-        app_config.APP_STARTUP_STATUS["youtube_error_details"] = None
-        print("YouTube OAuth: Service client re-initialized with new token and marked as ready.")
-        
+        # Directly build the service with the new credentials and update config
+        try:
+            from googleapiclient.discovery import build
+            from services.youtube_uploader import API_SERVICE_NAME, API_VERSION # Get these constants
+            
+            app_config.YOUTUBE_SERVICE_CLIENT = build(API_SERVICE_NAME, API_VERSION, credentials=creds)
+            app_config.APP_STARTUP_STATUS["youtube_ready"] = True
+            app_config.APP_STARTUP_STATUS["youtube_error_details"] = None
+            print("YouTube OAuth: YouTube service client created with new token and marked as ready.")
+        except Exception as service_build_exc:
+            print(f"ERROR: YouTube OAuth: Failed to build service client after fetching token: {service_build_exc}")
+            app_config.APP_STARTUP_STATUS["youtube_ready"] = False
+            app_config.APP_STARTUP_STATUS["youtube_error_details"] = f"Failed to build service after token fetch: {service_build_exc}"
+            # Token is saved, but client creation failed. User might need to retry auth or app restart might fix.
+
         _youtube_oauth_flow = None # Clear the flow object
 
         return RedirectResponse(url="/select_folder?message=YouTube_authorization_successful.")
