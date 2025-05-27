@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Select Folder - Barged API</title>
+</head>
+<body>
+    <h1>Select a Recipe Folder to Process</h1>
+
+    {% if request.query_params.get("message") %}
+        <p style="color: green;">{{ request.query_params.get("message").replace("_", " ") }}</p>
+    {% endif %}
+    {% if request.query_params.get("error") %}
+        <p style="color: red;">{{ request.query_params.get("error").replace("_", " ") }}</p>
+    {% endif %}
+
+    {% if folders %}
+        <form action="/fetch_clips" method="post">
+            <fieldset>
+                <legend>Available Google Drive Folders (Recipes):</legend>
+                {% for folder in folders %}
+                    <div>
+                        <input type="radio" id="{{ folder.id }}" name="folder_id" value="{{ folder.id }}" required 
+                               {% if folder.status_from_db == 'Uploaded' or folder.status_from_db == 'Failed' %}disabled{% endif %}>
+                        <label for="{{ folder.id }}">
+                            {{ folder.display_name }}
+                            {% if folder.status_from_db == 'Uploaded' and folder.youtube_url %}
+                                (✅ Uploaded - <a href="{{ folder.youtube_url }}" target="_blank">View on YouTube</a>)
+                            {% elif folder.status_from_db == 'Failed' %}
+                                (❌ Failed - Check DB/logs)
+                            {% elif folder.status_from_db and folder.status_from_db not in ['New', 'Downloaded'] %}
+                                <!-- (Processed: {{ folder.status_from_db }}) -->
+                            {% endif %}
+                        </label>
+                        <!-- Hidden input to pass folder_name (original name) -->
+                        <input type="hidden" name="folder_name_for_{{ folder.id }}" value="{{ folder.name }}">
+                    </div>
+                {% endfor %}
+            </fieldset>
+            <br>
+            <!-- JavaScript to dynamically set the folder_name based on selected folder_id -->
+            <script>
+                document.addEventListener('DOMContentLoaded', function() {
+                    const form = document.querySelector('form');
+                    const submitButton = form.querySelector('input[type="submit"]');
+                    const radioButtons = form.querySelectorAll('input[type="radio"][name="folder_id"]');
+
+                    form.addEventListener('submit', function(event) {
+                        let selectedFolderId = null;
+                        radioButtons.forEach(radio => {
+                            if (radio.checked) {
+                                selectedFolderId = radio.value;
+                            }
+                        });
+
+                        if (selectedFolderId) {
+                            const folderNameInput = form.querySelector(`input[type="hidden"][name="folder_name_for_${selectedFolderId}"]`);
+                            if (folderNameInput) {
+                                // Remove existing folder_name input if any
+                                const existingFolderName = form.querySelector('input[type="hidden"][name="folder_name"]');
+                                if (existingFolderName) {
+                                    existingFolderName.remove();
+                                }
+                                // Add the correct folder_name input
+                                const newFolderNameInput = document.createElement('input');
+                                newFolderNameInput.type = 'hidden';
+                                newFolderNameInput.name = 'folder_name';
+                                newFolderNameInput.value = folderNameInput.value;
+                                form.appendChild(newFolderNameInput);
+                            } else {
+                                alert('Could not find the folder name for the selected ID.');
+                                event.preventDefault(); // Stop submission
+                                return;
+                            }
+                        } else {
+                            alert('Please select a folder.');
+                            event.preventDefault(); // Stop submission
+                            return;
+                        }
+                    });
+                });
+            </script>
+            <input type="submit" value="Download and Process Selected Folder">
+        </form>
+    {% else %}
+        <p>No unprocessed folders found in Google Drive, or there was an error fetching them.</p>
+        <p>Please check the configured Google Drive folder or try again later.</p>
+    {% endif %}
+
+    <hr>
+    <p><a href="/">Back to Home</a></p>
+
+</body>
+</html>

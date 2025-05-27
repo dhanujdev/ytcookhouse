@@ -1,0 +1,34 @@
+# Environment secrets
+.env
+client_secret_*.json
+service_account_key.json
+token_gdrive.json
+token_youtube.json
+
+# Python specific
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+pip-freeze.txt
+pip-selfcheck.json
+*.egg-info/
+dist/
+build/
+*.egg
+venv/
+env/
+.venv/
+
+# Application-specific media files
+/videos/raw/
+/videos/merged/
+/videos/output/
+
+# Database file
+db.json
+
+# IDE / OS specific
+.vscode/
+.DS_Store
+Thumbs.db
