@@ -95,14 +95,14 @@ def save_db(db_content: dict):
     try:
         if not config.GDRIVE_SERVICE_CLIENT:
             print("UTILS: ERROR - Shared GDrive service client not available. Cannot save DB.")
-            return # Or raise an error
+            return False # Indicate failure
         service = config.GDRIVE_SERVICE_CLIENT
 
         from services import gdrive # For gdrive.get_or_create_app_data_folder_id etc.
         app_data_folder_id = gdrive.get_or_create_app_data_folder_id(service=service)
         if not app_data_folder_id:
             print("UTILS: ERROR - Could not get/create app data folder on GDrive. DB save failed.")
-            return
+            return False # Indicate failure
 
         existing_db_file_id = gdrive.find_file_id_by_name(app_data_folder_id, DB_JSON_FILENAME_ON_DRIVE, service=service)
         
@@ -129,13 +129,17 @@ def save_db(db_content: dict):
             CACHED_DB_CONTENT = db_content
             DB_CACHE_TIMESTAMP = time.time()
             print("UTILS: DB cache updated after save.")
+            return True # Indicate success
         else:
             print("UTILS: ERROR - Failed to upload DB to GDrive.")
+            return False # Indicate failure
 
     except gdrive.GDriveServiceError as e:
         print(f"UTILS: ERROR - GDriveServiceError while saving DB: {e}")
+        return False # Indicate failure
     except Exception as e:
         print(f"UTILS: ERROR - Unexpected error saving DB to GDrive: {e}")
+        return False # Indicate failure
 
 def initialize_db() -> dict:
     """Returns the structure for an empty database and attempts to save it to GDrive."""
@@ -166,8 +170,10 @@ def update_recipe_status(recipe_id: str, name: str, status: str, **kwargs):
     for key, value in kwargs.items():
         db["recipes"][recipe_id][key] = value
         
-    save_db(db)
-    print(f"UTILS: Updated status for recipe ID '{recipe_id}' ({name}) to '{status}'. Details: {kwargs}")
+    if save_db(db):
+        print(f"UTILS: Successfully saved and updated status for recipe ID '{recipe_id}' ({name}) to '{status}'. Details: {kwargs}")
+    else:
+        print(f"UTILS: WARNING - Failed to save status update to GDrive for recipe ID '{recipe_id}' ({name}). Changes may not be persisted.")
 
 def get_all_recipes_from_db() -> dict:
     db = load_db()
@@ -202,9 +208,12 @@ def reset_recipe_in_db(recipe_id: str):
         # Add any other fields that should be cleared upon reset
         # e.g., 'merged_video_path': None, 'metadata_file_path': None, if you ever store them
     }
-    save_db(db)
-    print(f"UTILS: Recipe ID '{recipe_id}' successfully reset.")
-    return True
+    if save_db(db):
+        print(f"UTILS: Recipe ID '{recipe_id}' successfully reset and saved to GDrive.")
+        return True
+    else:
+        print(f"UTILS: WARNING - Failed to save reset state to GDrive for recipe ID '{recipe_id}'. Reset may not be persisted.")
+        return False # Indicate that the save failed, even if local db object was modified
 
 if __name__ == '__main__':
     print("Testing GDrive-backed utils.py...")
@@ -241,12 +250,18 @@ def hard_reset_db_content() -> bool:
         "recipes": {},
         "last_gdrive_scan": None
     }
-    save_db(initial_db) # This will save to GDrive and should update the cache via its own logic
-    
-    # Explicitly set cache to the reset state immediately after save_db call returns.
-    # save_db already updates these, but doing it here ensures it, even if save_db changes.
-    config.CACHED_DB_CONTENT = initial_db 
-    config.DB_CACHE_TIMESTAMP = time.time()
-    print("UTILS: Database hard reset complete. Cache also reset.")
-    return True
+    if save_db(initial_db): # This will save to GDrive and should update the cache via its own logic
+        # Explicitly set cache to the reset state immediately after save_db call returns.
+        # save_db already updates these, but doing it here ensures it, even if save_db changes.
+        config.CACHED_DB_CONTENT = initial_db 
+        config.DB_CACHE_TIMESTAMP = time.time()
+        print("UTILS: Database hard reset complete. Cache also reset.")
+        return True
+    else:
+        print("UTILS: CRITICAL WARNING - Failed to save hard reset state to GDrive. Database may not be reset on persistent storage.")
+        # Still update local cache to reflect the attempted reset, but it's out of sync with GDrive
+        config.CACHED_DB_CONTENT = initial_db 
+        config.DB_CACHE_TIMESTAMP = time.time()
+        print("UTILS: Local cache has been reset, but GDrive save failed.")
+        return False
 

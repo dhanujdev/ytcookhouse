@@ -377,16 +377,16 @@ async def preview_video_page(request: Request, recipe_db_id: str):
 
     try:
         import config as app_config # Use an alias to avoid conflict if 'config' is used locally
+        from config import STATIC_PREVIEW_CACHE_DIR # Import the specific config variable
         gdrive_service = app_config.GDRIVE_SERVICE_CLIENT
         if not gdrive_service:
             raise HTTPException(status_code=503, detail="GDrive service not available. Please try again later.")
         
         preview_temp_dir_name = f"preview_temp_{recipe_db_id}_{recipe_name_safe}" # Make more unique
-        # Ensure static/preview_cache exists
-        static_preview_cache_dir = os.path.join(os.path.dirname(__file__), "..", "static", "preview_cache")
-        if not os.path.exists(static_preview_cache_dir): os.makedirs(static_preview_cache_dir)
+        # STATIC_PREVIEW_CACHE_DIR is already an absolute path and ensured to exist by config.py
+        # So, no need to check for its existence or create it here.
 
-        local_recipe_preview_dir = os.path.join(static_preview_cache_dir, preview_temp_dir_name)
+        local_recipe_preview_dir = os.path.join(STATIC_PREVIEW_CACHE_DIR, preview_temp_dir_name)
         if not os.path.exists(local_recipe_preview_dir): os.makedirs(local_recipe_preview_dir)
 
         # Download metadata from GDrive to a temp file within the servable preview directory

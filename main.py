@@ -18,22 +18,33 @@ async def startup_event():
     print("MAIN: Application startup event triggered.")
     # Initialize Google Drive Service
     print("MAIN: Initializing Google Drive Service...")
-    try:
-        # Use the new factory function to create the client
-        gdrive_client_instance = gdrive.create_gdrive_service()
-        if gdrive.check_gdrive_service(gdrive_client_instance): # Check the new client
-            import config # Import to assign to config's global variable
-            config.GDRIVE_SERVICE_CLIENT = gdrive_client_instance # Explicitly store it as the shared client
-            APP_STARTUP_STATUS["gdrive_ready"] = True
-            print("MAIN: Google Drive Service initialized, checked, and set as shared client.")
-        else:
-            # Error details should be set by check_gdrive_service itself
-            APP_STARTUP_STATUS["gdrive_ready"] = False
-            print(f"MAIN: ERROR - Google Drive Service check failed. Details: {APP_STARTUP_STATUS['gdrive_error_details']}")
-    except Exception as e:
+    # First, check critical configurations from config.py
+    import config # Import to access GOOGLE_AUTH_METHOD, GDRIVE_TARGET_FOLDER_ID
+    if config.GOOGLE_AUTH_METHOD in ["ERROR_JSON_CONTENT_PARSE", "ERROR_INSUFFICIENT_SA_DETAILS"] or not config.GOOGLE_SERVICE_ACCOUNT_INFO:
         APP_STARTUP_STATUS["gdrive_ready"] = False
-        APP_STARTUP_STATUS["gdrive_error_details"] = str(e)
-        print(f"MAIN: ERROR - Exception during Google Drive Service initialization: {e}")
+        error_detail = f"GDrive Service cannot initialize due to Service Account configuration errors: {config.GOOGLE_AUTH_METHOD}. Check .env."
+        APP_STARTUP_STATUS["gdrive_error_details"] = error_detail
+        print(f"MAIN: CRITICAL - {error_detail}")
+    elif not config.GDRIVE_TARGET_FOLDER_ID or config.GDRIVE_TARGET_FOLDER_ID == "...":
+        APP_STARTUP_STATUS["gdrive_ready"] = False
+        error_detail = "GDrive Service cannot initialize: GDRIVE_TARGET_FOLDER_ID is not set in .env."
+        APP_STARTUP_STATUS["gdrive_error_details"] = error_detail
+        print(f"MAIN: CRITICAL - {error_detail}")
+    else:
+        try:
+            gdrive_client_instance = gdrive.create_gdrive_service()
+            if gdrive.check_gdrive_service(gdrive_client_instance):
+                config.GDRIVE_SERVICE_CLIENT = gdrive_client_instance
+                APP_STARTUP_STATUS["gdrive_ready"] = True
+                print("MAIN: Google Drive Service initialized, checked, and set as shared client.")
+            else:
+                # Error details should be set by check_gdrive_service itself if it fails
+                APP_STARTUP_STATUS["gdrive_ready"] = False # Ensure it's false
+                print(f"MAIN: ERROR - Google Drive Service check failed. Details: {APP_STARTUP_STATUS['gdrive_error_details']}")
+        except Exception as e:
+            APP_STARTUP_STATUS["gdrive_ready"] = False
+            APP_STARTUP_STATUS["gdrive_error_details"] = str(e)
+            print(f"MAIN: ERROR - Exception during Google Drive Service initialization: {e}")
 
     # Initialize YouTube Service
     print("MAIN: Initializing YouTube Service...")
@@ -64,20 +75,49 @@ async def startup_event():
 
     # Initialize Gemini Service
     print("MAIN: Initializing Gemini Service...")
-    try:
-        gemini_model_instance = gemini.create_gemini_model()
-        if gemini.check_gemini_service(): # check_gemini_service directly uses genai.list_models after configuration
-            import config # Import to assign to config's global variable
-            config.GEMINI_SERVICE_CLIENT = gemini_model_instance # Explicitly store the created model instance
-            APP_STARTUP_STATUS["gemini_ready"] = True
-            print("MAIN: Gemini Service initialized, checked, and set as shared client.")
-        else:
-            APP_STARTUP_STATUS["gemini_ready"] = False
-            print(f"MAIN: ERROR - Gemini Service initialization or check failed. Details: {APP_STARTUP_STATUS['gemini_error_details']}")
-    except Exception as e:
+    # First, check critical configurations from config.py (GEMINI_API_KEY)
+    # config was already imported for GDrive checks.
+    if not config.GEMINI_API_KEY or config.GEMINI_API_KEY == "...":
         APP_STARTUP_STATUS["gemini_ready"] = False
-        APP_STARTUP_STATUS["gemini_error_details"] = str(e)
-        print(f"MAIN: ERROR - Exception during Gemini Service initialization: {e}")
+        error_detail = "Gemini Service cannot initialize: GEMINI_API_KEY is not set in .env."
+        APP_STARTUP_STATUS["gemini_error_details"] = error_detail
+        print(f"MAIN: CRITICAL - {error_detail}")
+    elif config.GOOGLE_AUTH_METHOD in ["ERROR_JSON_CONTENT_PARSE", "ERROR_INSUFFICIENT_SA_DETAILS"] and not config.GEMINI_API_KEY.startswith("AIza"):
+        # If Gemini API key is NOT a user API key (AIza...) and service account is broken, Gemini with SA will fail.
+        # This is a heuristic; some Gemini usage might rely on SA for project context even with user API keys.
+        # However, the primary check is the API key itself. This is a secondary consideration for SA-based Gemini features.
+        APP_STARTUP_STATUS["gemini_ready"] = False
+        error_detail = f"Gemini Service might fail: GEMINI_API_KEY is set, but Service Account has configuration errors ({config.GOOGLE_AUTH_METHOD})."
+        APP_STARTUP_STATUS["gemini_error_details"] = error_detail
+        print(f"MAIN: WARNING - {error_detail}") # Warning as it might still work with a user API key
+        # Proceed to try initializing, check_gemini_service will give the final say.
+        try:
+            gemini_model_instance = gemini.create_gemini_model()
+            if gemini.check_gemini_service():
+                config.GEMINI_SERVICE_CLIENT = gemini_model_instance
+                APP_STARTUP_STATUS["gemini_ready"] = True # It might become true if API key is user-based and valid
+                print("MAIN: Gemini Service initialized and checked (potentially with user API key).")
+            else:
+                APP_STARTUP_STATUS["gemini_ready"] = False # Ensure it's false
+                print(f"MAIN: ERROR - Gemini Service check failed. Details: {APP_STARTUP_STATUS['gemini_error_details']}")
+        except Exception as e:
+            APP_STARTUP_STATUS["gemini_ready"] = False
+            APP_STARTUP_STATUS["gemini_error_details"] = str(e)
+            print(f"MAIN: ERROR - Exception during Gemini Service initialization: {e}")
+    else: # GEMINI_API_KEY is set, and no obvious immediate SA conflict for it
+        try:
+            gemini_model_instance = gemini.create_gemini_model()
+            if gemini.check_gemini_service():
+                config.GEMINI_SERVICE_CLIENT = gemini_model_instance
+                APP_STARTUP_STATUS["gemini_ready"] = True
+                print("MAIN: Gemini Service initialized, checked, and set as shared client.")
+            else:
+                APP_STARTUP_STATUS["gemini_ready"] = False # Ensure it's false
+                print(f"MAIN: ERROR - Gemini Service initialization or check failed. Details: {APP_STARTUP_STATUS['gemini_error_details']}")
+        except Exception as e:
+            APP_STARTUP_STATUS["gemini_ready"] = False
+            APP_STARTUP_STATUS["gemini_error_details"] = str(e)
+            print(f"MAIN: ERROR - Exception during Gemini Service initialization: {e}")
 
     # Update overall readiness status
     if APP_STARTUP_STATUS["gdrive_ready"] and APP_STARTUP_STATUS["youtube_ready"] and APP_STARTUP_STATUS["gemini_ready"]:
@@ -107,18 +147,14 @@ app.include_router(upload.router)
 from templating import templates # Import templates
 
 # Mount static files directory for CSS, JS
-STATIC_DIR = os.path.join(os.path.dirname(__file__), 'static')
-if not os.path.exists(STATIC_DIR):
-    os.makedirs(STATIC_DIR) # Ensure static directory exists
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+# STATIC_DIR is defined in config as STATIC_DIR_CONFIG and created there.
+# We use STATIC_DIR_CONFIG from config for mounting.
+from config import STATIC_DIR_CONFIG
+# The os.makedirs call for STATIC_DIR_CONFIG (via STATIC_DIR) is already in config.py
+app.mount("/static", StaticFiles(directory=STATIC_DIR_CONFIG), name="static")
 
-# Mount videos directory to allow video playback in preview
-# IMPORTANT: This makes your 'videos' directory publicly accessible if the server is exposed.
-# For production, consider a more secure way to serve or stream private videos.
-VIDEO_FILES_DIR = os.path.join(os.path.dirname(__file__), 'videos') # Assuming 'videos' is at the root of barged_api
-if not os.path.exists(VIDEO_FILES_DIR):
-    os.makedirs(VIDEO_FILES_DIR) # Ensure videos directory exists
-app.mount("/videos_serve", StaticFiles(directory=VIDEO_FILES_DIR), name="videos_serve")
+# The /videos_serve mount and VIDEO_FILES_DIR are removed as APP_VIDEOS_DIR was removed from config.
+# Previews are handled by downloading to static/preview_cache and serving from /static.
 
 
 @app.get("/", response_class=HTMLResponse, name="home")

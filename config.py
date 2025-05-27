@@ -10,44 +10,66 @@ APP_ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(APP_ROOT_DIR, '.env')) # Load .env from barged_api directory
 
 # --- Google API Credentials Configuration ---
-SA_TYPE = os.getenv("SA_TYPE", "service_account")
-SA_PROJECT_ID = os.getenv("SA_PROJECT_ID")
-SA_PRIVATE_KEY_ID = os.getenv("SA_PRIVATE_KEY_ID")
-SA_PRIVATE_KEY = os.getenv("SA_PRIVATE_KEY") # Must contain literal \\n for newlines in .env
-SA_CLIENT_EMAIL = os.getenv("SA_CLIENT_EMAIL")
-SA_CLIENT_ID = os.getenv("SA_CLIENT_ID")
-SA_AUTH_URI = os.getenv("SA_AUTH_URI", "https://accounts.google.com/o/oauth2/auth")
-SA_TOKEN_URI = os.getenv("SA_TOKEN_URI", "https://oauth2.googleapis.com/token")
-SA_AUTH_PROVIDER_X509_CERT_URL = os.getenv("SA_AUTH_PROVIDER_X509_CERT_URL", "https://www.googleapis.com/oauth2/v1/certs")
-SA_CLIENT_X509_CERT_URL = os.getenv("SA_CLIENT_X509_CERT_URL")
-
+# Primary method: Use GOOGLE_SERVICE_ACCOUNT_CREDENTIALS_JSON_CONTENT from .env
+GOOGLE_SERVICE_ACCOUNT_JSON_CONTENT = os.getenv("GOOGLE_SERVICE_ACCOUNT_CREDENTIALS_JSON_CONTENT")
 GOOGLE_AUTH_METHOD = None
 GOOGLE_SERVICE_ACCOUNT_INFO = None
 
-if SA_PROJECT_ID and SA_PRIVATE_KEY_ID and SA_PRIVATE_KEY and SA_CLIENT_EMAIL and SA_CLIENT_ID and SA_CLIENT_X509_CERT_URL:
-    GOOGLE_SERVICE_ACCOUNT_INFO = {
-        "type": SA_TYPE,
-        "project_id": SA_PROJECT_ID,
-        "private_key_id": SA_PRIVATE_KEY_ID,
-        "private_key": SA_PRIVATE_KEY.replace('\\\\n', '\n') if SA_PRIVATE_KEY else None, # Adjusted escaping for \n
-        "client_email": SA_CLIENT_EMAIL,
-        "client_id": SA_CLIENT_ID,
-        "auth_uri": SA_AUTH_URI,
-        "token_uri": SA_TOKEN_URI,
-        "auth_provider_x509_cert_url": SA_AUTH_PROVIDER_X509_CERT_URL,
-        "client_x509_cert_url": SA_CLIENT_X509_CERT_URL
-    }
-    GOOGLE_AUTH_METHOD = "SERVICE_ACCOUNT_INDIVIDUAL_FIELDS"
+if GOOGLE_SERVICE_ACCOUNT_JSON_CONTENT:
+    try:
+        GOOGLE_SERVICE_ACCOUNT_INFO = json.loads(GOOGLE_SERVICE_ACCOUNT_JSON_CONTENT)
+        GOOGLE_AUTH_METHOD = "SERVICE_ACCOUNT_JSON_CONTENT"
+        print("CONFIG: Loaded Google Service Account credentials from GOOGLE_SERVICE_ACCOUNT_CREDENTIALS_JSON_CONTENT.")
+    except json.JSONDecodeError as e:
+        print(f"CRITICAL CONFIG ERROR: Failed to parse GOOGLE_SERVICE_ACCOUNT_CREDENTIALS_JSON_CONTENT: {e}. Service account auth will likely fail.")
+        GOOGLE_SERVICE_ACCOUNT_INFO = None # Ensure it's None on error
+        GOOGLE_AUTH_METHOD = "ERROR_JSON_CONTENT_PARSE"
 else:
-    print("ERROR CONFIG: Insufficient Google Service Account details in .env. Please set all SA_... variables.")
+    print("CONFIG: GOOGLE_SERVICE_ACCOUNT_CREDENTIALS_JSON_CONTENT not found in .env. Attempting fallback to individual SA_... variables.")
+    # Fallback to individual SA variables if JSON_CONTENT is not provided
+    SA_TYPE = os.getenv("SA_TYPE", "service_account")
+    SA_PROJECT_ID = os.getenv("SA_PROJECT_ID")
+    SA_PRIVATE_KEY_ID = os.getenv("SA_PRIVATE_KEY_ID")
+    SA_PRIVATE_KEY = os.getenv("SA_PRIVATE_KEY") # Must contain literal \\n for newlines in .env
+    SA_CLIENT_EMAIL = os.getenv("SA_CLIENT_EMAIL")
+    SA_CLIENT_ID = os.getenv("SA_CLIENT_ID")
+    SA_AUTH_URI = os.getenv("SA_AUTH_URI", "https://accounts.google.com/o/oauth2/auth")
+    SA_TOKEN_URI = os.getenv("SA_TOKEN_URI", "https://oauth2.googleapis.com/token")
+    SA_AUTH_PROVIDER_X509_CERT_URL = os.getenv("SA_AUTH_PROVIDER_X509_CERT_URL", "https://www.googleapis.com/oauth2/v1/certs")
+    SA_CLIENT_X509_CERT_URL = os.getenv("SA_CLIENT_X509_CERT_URL")
+
+    if SA_PROJECT_ID and SA_PRIVATE_KEY_ID and SA_PRIVATE_KEY and SA_CLIENT_EMAIL and SA_CLIENT_ID and SA_CLIENT_X509_CERT_URL:
+        GOOGLE_SERVICE_ACCOUNT_INFO = {
+            "type": SA_TYPE,
+            "project_id": SA_PROJECT_ID,
+            "private_key_id": SA_PRIVATE_KEY_ID,
+            "private_key": SA_PRIVATE_KEY.replace('\\n', '\n') if SA_PRIVATE_KEY else None,
+            "client_email": SA_CLIENT_EMAIL,
+            "client_id": SA_CLIENT_ID,
+            "auth_uri": SA_AUTH_URI,
+            "token_uri": SA_TOKEN_URI,
+            "auth_provider_x509_cert_url": SA_AUTH_PROVIDER_X509_CERT_URL,
+            "client_x509_cert_url": SA_CLIENT_X509_CERT_URL
+        }
+        GOOGLE_AUTH_METHOD = "SERVICE_ACCOUNT_INDIVIDUAL_FIELDS"
+        print("CONFIG: Loaded Google Service Account credentials from individual SA_... variables.")
+    else:
+        print("CRITICAL CONFIG ERROR: Insufficient Google Service Account details in .env (neither JSON_CONTENT nor all individual SA_... variables are set). Google API calls requiring service account auth will fail.")
+        GOOGLE_AUTH_METHOD = "ERROR_INSUFFICIENT_SA_DETAILS"
 
 # --- Google Drive Specific Configuration ---
-GDRIVE_TARGET_FOLDER_ID = os.getenv("GDRIVE_TARGET_FOLDER_ID", "...") 
+GDRIVE_TARGET_FOLDER_ID = os.getenv("GDRIVE_TARGET_FOLDER_ID") 
+if not GDRIVE_TARGET_FOLDER_ID or GDRIVE_TARGET_FOLDER_ID == "...":
+    print("CRITICAL CONFIG WARNING: GDRIVE_TARGET_FOLDER_ID is not set or is placeholder '...'. Google Drive features relying on this will fail.")
+    # GDRIVE_TARGET_FOLDER_ID = None # Optionally set to None to make checks more explicit later
 GOOGLE_DRIVE_APP_DATA_FOLDER_NAME = os.getenv("GOOGLE_DRIVE_APP_DATA_FOLDER_NAME", "YTCookhouseAppData")
 DB_JSON_FILENAME_ON_DRIVE = "app_database.json" 
 
 # --- Gemini API Key ---
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "...")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if not GEMINI_API_KEY or GEMINI_API_KEY == "...":
+    print("CRITICAL CONFIG WARNING: GEMINI_API_KEY is not set or is placeholder '...'. Gemini features will fail.")
+    # GEMINI_API_KEY = None # Optionally set to None
 
 # --- Environment-Aware Base Directory for Temporary Processing ---
 # This is the root for raw_clips_temp, merged_videos_temp, metadata_temp
@@ -80,20 +102,17 @@ METADATA_TEMP_DIR = os.path.join(TEMP_PROCESSING_BASE_DIR, "metadata_temp")
 # These are assumed to be part of your project repo or managed by where the app is run.
 STATIC_DIR_CONFIG = os.path.join(APP_ROOT_DIR, "static")
 STATIC_AUDIO_DIR = os.path.join(STATIC_DIR_CONFIG, "audio")
+# Preview cache within static, for videos downloaded from GDrive for preview
+STATIC_PREVIEW_CACHE_DIR = os.path.join(STATIC_DIR_CONFIG, "preview_cache")
 
-# Base directory for 'videos' folder which might be served or linked directly
-# If these are also meant to be temporary before GDrive upload, they could use TEMP_PROCESSING_BASE_DIR.
-# If they are for a different purpose (e.g., local final output not necessarily uploaded or if GDrive is just a backup),
-# keeping them separate based on APP_ROOT_DIR is fine.
-APP_VIDEOS_DIR = os.path.join(APP_ROOT_DIR, "videos")
-APP_VIDEOS_RAW_DIR = os.path.join(APP_VIDEOS_DIR, "raw")             # Potentially GDrive download target if not using TEMP_PROCESSING_BASE_DIR for it
-APP_VIDEOS_MERGED_DIR = os.path.join(APP_VIDEOS_DIR, "merged")       # Potentially local merged video storage
-APP_VIDEOS_OUTPUT_DIR = os.path.join(APP_VIDEOS_DIR, "output")       # Potentially local metadata storage
+
+# APP_VIDEOS_DIR and its subdirectories are removed as they are redundant.
+# All processing happens in TEMP_PROCESSING_BASE_DIR.
+# Previews are handled via STATIC_PREVIEW_CACHE_DIR.
 
 DIRECTORIES_TO_CREATE = [
     TEMP_PROCESSING_BASE_DIR, RAW_DIR, MERGED_DIR, METADATA_TEMP_DIR,
-    STATIC_DIR_CONFIG, STATIC_AUDIO_DIR,
-    APP_VIDEOS_DIR, APP_VIDEOS_RAW_DIR, APP_VIDEOS_MERGED_DIR, APP_VIDEOS_OUTPUT_DIR
+    STATIC_DIR_CONFIG, STATIC_AUDIO_DIR, STATIC_PREVIEW_CACHE_DIR
 ]
 
 for dir_path in DIRECTORIES_TO_CREATE:
@@ -106,9 +125,9 @@ print(f"CONFIG - RAW_DIR (for downloaded raw clips): {RAW_DIR}")
 print(f"CONFIG - MERGED_DIR (for temporary merged videos): {MERGED_DIR}")
 print(f"CONFIG - METADATA_TEMP_DIR (for temporary metadata JSONs): {METADATA_TEMP_DIR}")
 print(f"CONFIG - Selected Google Auth Method: {GOOGLE_AUTH_METHOD}")
-print(f"CONFIG - GDrive Target Folder ID (Raw Clips Source): {GDRIVE_TARGET_FOLDER_ID}")
+print(f"CONFIG - GDrive Target Folder ID (Raw Clips Source): {GDRIVE_TARGET_FOLDER_ID if GDRIVE_TARGET_FOLDER_ID else 'NOT SET'}")
 print(f"CONFIG - GDrive App Data Folder Name (for DB, Merged, Metadata): {GOOGLE_DRIVE_APP_DATA_FOLDER_NAME}")
-print(f"CONFIG - Gemini API Key: {'SET' if GEMINI_API_KEY and GEMINI_API_KEY != '...' else 'NOT SET'}")
+print(f"CONFIG - Gemini API Key: {'SET' if GEMINI_API_KEY and GEMINI_API_KEY != '...' and GEMINI_API_KEY is not None else 'NOT SET'}")
 
 # --- Shared Service Clients & Startup Status (Added for Refactoring) ---
 GDRIVE_SERVICE_CLIENT = None
