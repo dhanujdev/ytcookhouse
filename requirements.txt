@@ -6,3 +6,4 @@ google-auth-oauthlib
 google-generativeai
 Jinja2
 python-multipart
+google-auth
