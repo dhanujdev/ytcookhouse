@@ -218,8 +218,57 @@ if __name__ == '__main__':
         print("No Google Auth method properly configured in .env / config.py. Test may fail.")
     
     print(f"Target GDrive Folder ID: {GDRIVE_FOLDER_ID}")
+    APP_DATA_FOLDER_ID_TEST = None # To be set after creating/getting it
     try:
-        folders = list_folders_from_gdrive_and_db_status()
+        # Test: Get or create app data folder
+        app_data_folder_id_test = get_or_create_app_data_folder_id()
+        if not app_data_folder_id_test:
+            print("CRITICAL TEST ERROR: Could not get or create App Data Folder in GDrive. Aborting further GDrive tests.")
+            return
+        APP_DATA_FOLDER_ID_TEST = app_data_folder_id_test
+        print(f"Test: App Data Folder ID: {APP_DATA_FOLDER_ID_TEST}")
+
+        # Test: Initialize or load db.json from GDrive (simplified for test)
+        # In a real scenario, utils.py would use these gdrive functions
+        db_test_content = {"test_key": "test_value_initial"}
+        db_gdrive_filename_test = "test_app_database.json"
+        
+        # Try to find it first
+        existing_db_file_id = find_file_id_by_name(APP_DATA_FOLDER_ID_TEST, db_gdrive_filename_test)
+        print(f"Test: Existing DB file ID on GDrive: {existing_db_file_id}")
+
+        # Create a dummy local db.json to upload
+        dummy_local_db_path = os.path.join(os.path.dirname(__file__), "..", "videos", "temp_test_db.json") # Use a temp location
+        if not os.path.exists(os.path.dirname(dummy_local_db_path)):
+             os.makedirs(os.path.dirname(dummy_local_db_path))
+        with open(dummy_local_db_path, 'w') as f_db_test:
+            json.dump(db_test_content, f_db_test)
+
+        uploaded_db_file_id = upload_file_to_drive(
+            local_file_path=dummy_local_db_path, 
+            drive_folder_id=APP_DATA_FOLDER_ID_TEST, 
+            drive_filename=db_gdrive_filename_test,
+            mimetype='application/json',
+            existing_file_id=existing_db_file_id
+        )
+        if uploaded_db_file_id:
+            print(f"Test: Successfully uploaded/updated {db_gdrive_filename_test} to GDrive. File ID: {uploaded_db_file_id}")
+            # Test download and verify content
+            downloaded_db_content_str = get_file_content_from_drive(uploaded_db_file_id)
+            if downloaded_db_content_str:
+                downloaded_db_json = json.loads(downloaded_db_content_str)
+                if downloaded_db_json.get("test_key") == "test_value_initial":
+                    print("Test: DB content verification after download SUCCESSFUL.")
+                else:
+                    print("Test: DB content verification FAILED.")
+            else:
+                print("Test: Failed to download DB content for verification.")
+        else:
+            print(f"Test: Failed to upload/update {db_gdrive_filename_test} to GDrive.")
+        
+        if os.path.exists(dummy_local_db_path): os.remove(dummy_local_db_path)
+
+        folders = list_folders_from_gdrive_and_db_status() # This will now use the GDrive based db.json indirectly via utils
         if folders:
             print(f"Successfully listed {len(folders)} folders.")
             # Simplified download test: try to download the first 'New' folder if any
@@ -235,15 +284,30 @@ if __name__ == '__main__':
                 recipe_safe_name_test = "".join(c if c.isalnum() else "_" for c in folder_to_download['name'])
                 # Create a unique subfolder for this test run to avoid conflicts if RAW_DIR is used by main app
                 # However, for simplicity and to align with how main app might work, use the direct safe name path
-                # This might overwrite if test is run multiple times on same folder without clearing db.json & videos/raw
-                specific_test_download_path = os.path.join(RAW_DIR, recipe_safe_name_test + "_gdriveSvcTest")
-                if not os.path.exists(specific_test_download_path): os.makedirs(specific_test_download_path)
+            # This might overwrite if test is run multiple times on same folder without clearing db.json & videos/raw
+            # For GDrive persistence, RAW_DIR is an ephemeral local temp staging area
+            # The main app will ensure RAW_DIR exists locally.
+            from config import RAW_DIR 
+            local_temp_raw_dir_for_test = os.path.join(RAW_DIR, recipe_safe_name_test + "_gdriveSvcTest_tempLocal")
+            if not os.path.exists(local_temp_raw_dir_for_test): os.makedirs(local_temp_raw_dir_for_test)
 
-                print(f"Test download path: {specific_test_download_path}")
-                download_success = download_folder_contents(folder_to_download['id'], folder_to_download['name'], specific_test_download_path)
-                print(f"Download test for '{folder_to_download['name']}' {'SUCCESSFUL' if download_success else 'FAILED'}.")
-            else:
-                print("No folder found to test download functionality (or no new folders)." )
+            print(f"Test download path (local ephemeral): {local_temp_raw_dir_for_test}")
+            download_success = download_folder_contents(folder_to_download['id'], folder_to_download['name'], local_temp_raw_dir_for_test)
+            print(f"Download test for '{folder_to_download['name']}' to local temp dir {'SUCCESSFUL' if download_success else 'FAILED'}.")
+            
+            # Test creating a recipe subfolder on GDrive for outputs
+            if APP_DATA_FOLDER_ID_TEST:
+                recipe_gdrive_output_folder_id = get_or_create_recipe_subfolder_id(APP_DATA_FOLDER_ID_TEST, folder_to_download['id'], "test_outputs")
+                if recipe_gdrive_output_folder_id:
+                    print(f"Test: Successfully created/got GDrive subfolder for recipe outputs: {recipe_gdrive_output_folder_id}")
+                else:
+                    print("Test: Failed to create/get GDrive subfolder for recipe outputs.")
+            
+            # Clean up local temp download dir for test
+            if os.path.exists(local_temp_raw_dir_for_test): shutil.rmtree(local_temp_raw_dir_for_test)
+
+        else:
+            print("Test: No folder found to test download functionality (or no new folders)." )
         else:
             print("No folders listed. Check GDrive Folder ID, permissions, or API errors.")
     except Exception as e:
