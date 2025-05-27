@@ -1,0 +1,20 @@
+# c:\Users\dhanu\VOID\ytauto2\barged_api\.dockerignore
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.env
+.git
+.gitignore
+.vscode/
+venv/
+env/
+.venv/
+unused/
+local_dev_tokens/ # If you ever create such a folder for local tokens
+*.mp4 # If you have any test videos in your app root not meant for the image
+# *.json # Be careful with this, only if there are large json files not needed
+
+# Explicitly ignore the Dockerfile itself if it's not needed inside the image
+Dockerfile
