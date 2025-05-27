@@ -11,9 +11,7 @@ app = FastAPI()
 # Mount the upload router
 app.include_router(upload.router)
 
-# Configure templates
-TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), 'templates')
-templates = Jinja2Templates(directory=TEMPLATES_DIR)
+from templating import templates # Import templates
 
 # Mount static files directory for CSS, JS
 STATIC_DIR = os.path.join(os.path.dirname(__file__), 'static')
@@ -30,6 +28,6 @@ if not os.path.exists(VIDEO_FILES_DIR):
 app.mount("/videos_serve", StaticFiles(directory=VIDEO_FILES_DIR), name="videos_serve")
 
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/", response_class=HTMLResponse, name="home")
 async def home(request: Request):
     return templates.TemplateResponse("home.html", {"request": request})

@@ -13,10 +13,13 @@ from services.youtube_uploader import YouTubeUploaderError
 from config import RAW_DIR, OUTPUT_DIR # Assuming OUTPUT_DIR for metadata
 from utils import update_recipe_status, get_recipe_status, get_all_recipes_from_db
 
+
 router = APIRouter()
 
-TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), '..', 'templates')
-templates = Jinja2Templates(directory=TEMPLATES_DIR)
+# Remove local templates definition, will import from main
+# TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), '..', 'templates')
+# templates = Jinja2Templates(directory=TEMPLATES_DIR)
+from templating import templates # Import the templates instance from templating.py
 
 # --- Helper function to trigger next step in the background ---
 def trigger_next_background_task(background_tasks: BackgroundTasks, recipe_id: str):
@@ -61,7 +64,7 @@ def trigger_next_background_task(background_tasks: BackgroundTasks, recipe_id: s
 
 # --- Routes ---
 
-@router.get("/select_folder", response_class=HTMLResponse)
+@router.get("/select_folder", response_class=HTMLResponse, name="select_folder_route")
 async def select_folder_page(request: Request, message: str = None, error: str = None):
     folders_with_status = gdrive.list_folders_from_gdrive_and_db_status()
     return templates.TemplateResponse("select_folder.html", {
@@ -71,7 +74,7 @@ async def select_folder_page(request: Request, message: str = None, error: str =
         "error": error
     })
 
-@router.post("/fetch_clips")
+@router.post("/fetch_clips", name="fetch_clips_route")
 async def fetch_clips_route(background_tasks: BackgroundTasks, folder_id: str = Form(...), folder_name: str = Form(...)):
     print(f"ROUTE /fetch_clips: Request for folder ID: {folder_id}, Name: {folder_name}")
     safe_folder_name = "".join(c if c.isalnum() else "_" for c in folder_name)
@@ -104,7 +107,7 @@ async def fetch_clips_route(background_tasks: BackgroundTasks, folder_id: str = 
         return RedirectResponse(url=f"/select_folder?error={error_message}", status_code=303)
 
 
-@router.get("/preview/{recipe_db_id}", response_class=HTMLResponse)
+@router.get("/preview/{recipe_db_id}", response_class=HTMLResponse, name="preview_recipe_route")
 async def preview_video_page(request: Request, recipe_db_id: str):
     print(f"ROUTE /preview: Request for recipe ID: {recipe_db_id}")
     recipe_data = get_recipe_status(recipe_db_id)
@@ -203,7 +206,7 @@ async def trigger_metadata_route(background_tasks: BackgroundTasks, recipe_db_id
     msg = f"Metadata generation started in background for '{recipe_name_orig}'."
     return RedirectResponse(url=f"/select_folder?message={msg}", status_code=303)
 
-@router.post("/upload_youtube")
+@router.post("/upload_youtube", name="upload_to_youtube_route")
 async def upload_to_youtube_endpoint(background_tasks: BackgroundTasks, 
                                    request: Request, 
                                    recipe_db_id: str = Form(...),
