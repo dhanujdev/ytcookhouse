@@ -134,20 +134,15 @@ DB_CACHE_DURATION_SECONDS = 1800 # Cache DB content for 30 minutes by default
 # CLIENT_SECRET_YOUTUBE_PATH is no longer used directly for YouTube client secret.
 # Configuration is expected via GOOGLE_CLIENT_SECRET_JSON_YOUTUBE environment variable.
 
-# --- Path to store the user's OAuth token after they grant consent (Made environment-aware) ---
-TOKEN_YOUTUBE_OAUTH_FILENAME = "token_youtube_oauth.json"
-if 'RENDER' in os.environ and os.environ.get('RENDER_INSTANCE_ID'):
-    # Ensure this path matches where your Render persistent disk is mounted and you have write permissions.
-    persistent_storage_base = "/mnt/data" 
-    APP_TOKENS_PERSIST_DIR = os.path.join(persistent_storage_base, "ytcookhouse_tokens") 
-    os.makedirs(APP_TOKENS_PERSIST_DIR, exist_ok=True)
-    TOKEN_YOUTUBE_OAUTH_PATH = os.path.join(APP_TOKENS_PERSIST_DIR, TOKEN_YOUTUBE_OAUTH_FILENAME)
-    print(f"CONFIG - Running on Render. OAuth Token Path (Persistent): {TOKEN_YOUTUBE_OAUTH_PATH}")
-else:
-    # Local development path
-    TOKEN_YOUTUBE_OAUTH_PATH = os.path.join(APP_ROOT_DIR, TOKEN_YOUTUBE_OAUTH_FILENAME)
-    print(f"CONFIG - Running Locally. OAuth Token Path: {TOKEN_YOUTUBE_OAUTH_PATH}")
-# Note: The old OAUTH_TOKEN_YOUTUBE_PATH in youtube_uploader.py might be for a different flow or can be removed/renamed.
+# --- Path for YouTube OAuth token (primarily for in-memory, potential initial load) ---
+TOKEN_YOUTUBE_OAUTH_FILENAME = "token_youtube_oauth.json" # Keep filename for consistency
+# This path will be used to attempt loading a token at startup (e.g., from a previous local session).
+# It will NOT be actively written to by the OAuth callback in the new in-memory flow.
+TOKEN_YOUTUBE_OAUTH_PATH = os.path.join(APP_ROOT_DIR, TOKEN_YOUTUBE_OAUTH_FILENAME)
+print(f"CONFIG - YouTube OAuth Token Path (for potential load, not active save): {TOKEN_YOUTUBE_OAUTH_PATH}")
+
+# --- In-Memory Storage for active YouTube OAuth Credentials ---
+YOUTUBE_OAUTH_CREDENTIALS = None
 
 # --- General Auth Method Selection ---
 # GOOGLE_AUTH_METHOD still applies to GDrive and Gemini (Service Account)

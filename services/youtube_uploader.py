@@ -12,15 +12,15 @@ from googleapiclient.http import MediaFileUpload
 import subprocess # Only for __main__ test dummy video
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# Import app_config to access its attributes like YOUTUBE_OAUTH_CREDENTIALS
+import config as app_config
 from config import (
     GOOGLE_AUTH_METHOD,
     GOOGLE_SERVICE_ACCOUNT_INFO,
-    # ---- Added for Refactoring ----
-    # YOUTUBE_SERVICE_CLIENT, # No longer managing shared client within this module for OAuth user flow
-    APP_STARTUP_STATUS,      # For updating status during checks
-    # CLIENT_SECRET_YOUTUBE_PATH, # No longer using file path for YouTube client secret
-    TOKEN_YOUTUBE_OAUTH_PATH,   # Path to store/load user tokens
-    YOUTUBE_AUTH_METHOD         # To decide auth flow
+    APP_STARTUP_STATUS,
+    TOKEN_YOUTUBE_OAUTH_PATH,  # Still used for initial load attempt
+    YOUTUBE_AUTH_METHOD
+    # YOUTUBE_OAUTH_CREDENTIALS is accessed via app_config.YOUTUBE_OAUTH_CREDENTIALS
 )
 from utils import update_recipe_status, get_recipe_status 
 from services import gdrive 
@@ -48,9 +48,24 @@ class YouTubeNeedsAuthorization(Exception):
         super().__init__(f"User authorization required. Please visit: {authorization_url}")
 
 def create_youtube_service(redirect_uri: str = None): # redirect_uri needed for web flow
-    """Creates and returns a new YouTube API service client using OAuth 2.0 User Consent Flow."""
-    creds = None
-    print(f"YouTube OAuth: Attempting to get credentials. Configured method: {YOUTUBE_AUTH_METHOD}")
+    """Creates and returns a new YouTube API service client using OAuth 2.0 User Consent Flow.
+    Manages credentials in memory (app_config.YOUTUBE_OAUTH_CREDENTIALS).
+    """
+    # 1. Check if valid credentials already exist in memory
+    if app_config.YOUTUBE_OAUTH_CREDENTIALS and app_config.YOUTUBE_OAUTH_CREDENTIALS.valid:
+        print("YouTube OAuth: Using valid credentials from memory (app_config.YOUTUBE_OAUTH_CREDENTIALS).")
+        try:
+            # Rebuild service with in-memory creds, in case the YOUTUBE_SERVICE_CLIENT was None
+            service = build(API_SERVICE_NAME, API_VERSION, credentials=app_config.YOUTUBE_OAUTH_CREDENTIALS)
+            app_config.YOUTUBE_SERVICE_CLIENT = service # Ensure shared client is updated
+            return service
+        except Exception as e:
+            print(f"YouTube OAuth: Error rebuilding service from in-memory creds: {e}. Will attempt full flow.")
+            app_config.YOUTUBE_OAUTH_CREDENTIALS = None # Invalidate bad in-memory creds
+
+    creds = app_config.YOUTUBE_OAUTH_CREDENTIALS # Start with what's in memory, if anything
+
+    print(f"YouTube OAuth: Attempting to get/refresh credentials. Configured method: {YOUTUBE_AUTH_METHOD}")
 
     client_config_dict_from_env = None
     client_config_json_str_env = os.getenv("GOOGLE_CLIENT_SECRET_JSON_YOUTUBE")
@@ -75,41 +90,55 @@ def create_youtube_service(redirect_uri: str = None): # redirect_uri needed for 
     if not client_config_dict_from_env: # Should be caught by previous checks, but as a safeguard
         msg = "YouTube OAuth Error: Client config could not be loaded from GOOGLE_CLIENT_SECRET_JSON_YOUTUBE."
         print(f"ERROR: {msg}")
-        if APP_STARTUP_STATUS.get("youtube_error_details") is None: 
-             APP_STARTUP_STATUS["youtube_error_details"] = msg
+        if app_config.APP_STARTUP_STATUS.get("youtube_error_details") is None: 
+             app_config.APP_STARTUP_STATUS["youtube_error_details"] = msg
         raise YouTubeUploaderError(msg)
 
-    if os.path.exists(TOKEN_YOUTUBE_OAUTH_PATH):
-        try:
-            creds = UserCredentials.from_authorized_user_file(TOKEN_YOUTUBE_OAUTH_PATH, SCOPES_YOUTUBE)
-            print(f"YouTube OAuth: Loaded credentials from {TOKEN_YOUTUBE_OAUTH_PATH}")
-        except Exception as e:
-            print(f"YouTube OAuth: Error loading token file: {e}. Will attempt re-authorization.")
-            creds = None # Ensure creds is None to trigger re-auth
-
+    # 2. If no valid creds in memory, try loading from TOKEN_YOUTUBE_OAUTH_PATH (e.g., for local dev persistence)
     if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
+        if os.path.exists(TOKEN_YOUTUBE_OAUTH_PATH):
+            try:
+                creds = UserCredentials.from_authorized_user_file(TOKEN_YOUTUBE_OAUTH_PATH, SCOPES_YOUTUBE)
+                print(f"YouTube OAuth: Loaded credentials from file {TOKEN_YOUTUBE_OAUTH_PATH}")
+                if creds and creds.valid:
+                    app_config.YOUTUBE_OAUTH_CREDENTIALS = creds # Store in memory
+                else: # File existed but creds invalid/expired
+                    creds = None 
+            except Exception as e:
+                print(f"YouTube OAuth: Error loading token file {TOKEN_YOUTUBE_OAUTH_PATH}: {e}. Will attempt re-authorization.")
+                creds = None
+        else:
+            print(f"YouTube OAuth: Token file {TOKEN_YOUTUBE_OAUTH_PATH} not found.")
+
+
+    # 3. Refresh or initiate new OAuth flow if necessary
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token: # Handles creds loaded from file or pre-existing in memory
             print("YouTube OAuth: Credentials expired, attempting to refresh...")
             try:
                 creds.refresh(Request())
                 print("YouTube OAuth: Credentials refreshed successfully.")
-                # Save the refreshed credentials
-                with open(TOKEN_YOUTUBE_OAUTH_PATH, 'w') as token_file:
-                    token_file.write(creds.to_json())
-                print(f"YouTube OAuth: Refreshed token saved to {TOKEN_YOUTUBE_OAUTH_PATH}")
+                app_config.YOUTUBE_OAUTH_CREDENTIALS = creds # Store refreshed creds in memory
+                # Optionally, save to TOKEN_YOUTUBE_OAUTH_PATH for local dev persistence if desired
+                # with open(TOKEN_YOUTUBE_OAUTH_PATH, 'w') as token_file:
+                #     token_file.write(creds.to_json())
+                # print(f"YouTube OAuth: Refreshed token saved to {TOKEN_YOUTUBE_OAUTH_PATH} (and updated in memory)")
             except RefreshError as e:
                 print(f"YouTube OAuth: Error refreshing credentials: {e}. Need new authorization.")
-                # Fall through to re-authorization by deleting bad token file
-                if os.path.exists(TOKEN_YOUTUBE_OAUTH_PATH):
-                    os.remove(TOKEN_YOUTUBE_OAUTH_PATH)
-                creds = None # Force re-auth
-            except Exception as e_refresh: # Catch other potential errors during refresh
+                app_config.YOUTUBE_OAUTH_CREDENTIALS = None # Clear invalid creds from memory
+                if os.path.exists(TOKEN_YOUTUBE_OAUTH_PATH): # Remove bad token file if it exists
+                    try: os.remove(TOKEN_YOUTUBE_OAUTH_PATH)
+                    except OSError as ose: print(f"Error removing old token file: {ose}")
+                creds = None 
+            except Exception as e_refresh:
                 print(f"YouTube OAuth: Unexpected error during token refresh: {e_refresh}. Need new authorization.")
+                app_config.YOUTUBE_OAUTH_CREDENTIALS = None
                 if os.path.exists(TOKEN_YOUTUBE_OAUTH_PATH):
-                    os.remove(TOKEN_YOUTUBE_OAUTH_PATH)
-                creds = None # Force re-auth
+                    try: os.remove(TOKEN_YOUTUBE_OAUTH_PATH)
+                    except OSError as ose: print(f"Error removing old token file: {ose}")
+                creds = None
         
-        if not creds: # Trigger this if creds are still None (no token file, or refresh failed)
+        if not creds: # Trigger this if creds are still None (no token, or refresh failed)
             print(f"YouTube OAuth: Credentials not found or invalid. Starting OAuth flow.")
             if not redirect_uri:
                 # This happens if create_youtube_service is called by a background task without a redirect_uri
@@ -118,45 +147,55 @@ def create_youtube_service(redirect_uri: str = None): # redirect_uri needed for 
                 # If called at startup without a token, it can't complete the flow without user interaction.
                 msg = "YouTube OAuth: Cannot initiate authorization flow without a redirect_uri or pre-existing token. User needs to authorize via web UI first."
                 print(f"ERROR: {msg}")
-                if APP_STARTUP_STATUS.get("youtube_error_details") is None:
-                    APP_STARTUP_STATUS["youtube_error_details"] = msg
-                raise YouTubeUploaderError(msg) # Or could raise YouTubeNeedsAuthorization here if preferred for startup
+                if app_config.APP_STARTUP_STATUS.get("youtube_error_details") is None:
+                    app_config.APP_STARTUP_STATUS["youtube_error_details"] = msg
+                # If called at startup without redirect_uri and no valid token, this is an error.
+                # If called by a background task without redirect_uri, it means auth hasn't happened.
+                raise YouTubeUploaderError(msg) 
 
-            # Use client_config_dict_from_env (must be available at this point)
-            if not client_config_dict_from_env: # This should be an impossible state if logic above is correct
+            # At this point, we need to start a new OAuth flow.
+            # Ensure client_config_dict_from_env is available (checked earlier).
+            if not client_config_dict_from_env:
                 raise YouTubeUploaderError("Critical: YouTube client secret config from ENV VAR missing for flow initiation.")
             
             flow = InstalledAppFlow.from_client_config(client_config_dict_from_env, SCOPES_YOUTUBE)
-            
-            flow.redirect_uri = redirect_uri # Set the redirect URI for the web flow
+            flow.redirect_uri = redirect_uri 
             
             authorization_url, state = flow.authorization_url(
                 access_type='offline', 
-                prompt='consent', # Force consent screen even if previously approved, good for ensuring refresh_token
+                prompt='consent',
                 include_granted_scopes='true'
             )
             print(f"YouTube OAuth: Authorization URL generated. State: {state}")
-            # Store flow and state for the callback to use. This is tricky without a proper session.
-            # For simplicity here, we can store it in a global variable or a temporary file.
-            # A better way for web apps is to use a session or a short-lived cache.
-            # For now, we will raise an exception that the calling route can catch.
-            # This exception will be caught by the /authorize_youtube route in practice.
-            # If create_youtube_service is called directly by startup or background task without a redirect_uri,
-            # it will hit the "Cannot initiate authorization flow without a redirect_uri" error before this.
+            # The actual credentials will be obtained by the callback route.
+            # This function, when redirect_uri is provided, signals that authorization is needed.
+            # The callback will then update app_config.YOUTUBE_OAUTH_CREDENTIALS.
             raise YouTubeNeedsAuthorization(authorization_url)
 
+    # 4. If we have valid credentials at this point (either from memory, file, or refresh), use them.
     if not creds or not creds.valid:
-        # If after all attempts, creds are still not valid, raise error.
-        msg = "YouTube OAuth: Credentials still not valid after attempts (or token file is bad/missing and no interactive flow was triggered)."
-        if APP_STARTUP_STATUS.get("youtube_error_details") is None:
-            APP_STARTUP_STATUS["youtube_error_details"] = msg
+        # This path should ideally not be hit if the logic above is correct,
+        # as new flow would raise YouTubeNeedsAuthorization or other errors would have been raised.
+        msg = "YouTube OAuth: Credentials are still not valid after all attempts. This indicates an issue in the OAuth logic or state."
+        if app_config.APP_STARTUP_STATUS.get("youtube_error_details") is None:
+            app_config.APP_STARTUP_STATUS["youtube_error_details"] = msg
         raise YouTubeUploaderError(msg)
+    
+    # If creds are valid (either pre-existing in memory or successfully loaded/refreshed)
+    # Ensure global in-memory credentials are set if they were just loaded/refreshed
+    if creds and creds.valid: # Double check for safety
+        app_config.YOUTUBE_OAUTH_CREDENTIALS = creds 
+    else: # Should be impossible state if logic above is correct
+        raise YouTubeUploaderError("Reached end of create_youtube_service with invalid credentials unexpectedly.")
+
 
     try: 
-        service = build(API_SERVICE_NAME, API_VERSION, credentials=creds)
-        print(f"YouTube Service Factory: Service client created successfully using OAuth User Consent.")
+        service = build(API_SERVICE_NAME, API_VERSION, credentials=app_config.YOUTUBE_OAUTH_CREDENTIALS)
+        print(f"YouTube Service Factory: Service client built successfully using OAuth User Consent (from memory).")
+        app_config.YOUTUBE_SERVICE_CLIENT = service # Ensure shared client is also updated
         return service
     except Exception as e: 
+        app_config.APP_STARTUP_STATUS["youtube_error_details"] = f"Failed to build YouTube service: {e}"
         raise YouTubeUploaderError(f"Failed to build YouTube service with OAuth User Consent: {e}")
 
 def check_youtube_service(service_client) -> bool:

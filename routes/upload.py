@@ -211,8 +211,11 @@ async def authorize_youtube(request: Request):
 @router.get("/oauth2callback", name="oauth2callback_youtube_route")
 async def oauth2callback_youtube(request: Request, code: str = None, state: str = None, error: str = None):
     global _youtube_oauth_flow
-    from config import TOKEN_YOUTUBE_OAUTH_PATH, YOUTUBE_SERVICE_CLIENT # to store client after auth
-    import config as app_config # to set YOUTUBE_SERVICE_CLIENT
+    # TOKEN_YOUTUBE_OAUTH_PATH is no longer actively written to here.
+    # YOUTUBE_OAUTH_CREDENTIALS and YOUTUBE_SERVICE_CLIENT are accessed via app_config.
+    import config as app_config 
+    from googleapiclient.discovery import build # For building the service client
+    from services.youtube_uploader import API_SERVICE_NAME, API_VERSION # For service details
 
     if error:
         return RedirectResponse(url=f"/select_folder?error=YouTube_OAuth_Error:_{error}")
@@ -232,24 +235,32 @@ async def oauth2callback_youtube(request: Request, code: str = None, state: str 
         _youtube_oauth_flow.fetch_token(code=code)
         creds = _youtube_oauth_flow.credentials
         
-        with open(TOKEN_YOUTUBE_OAUTH_PATH, 'w') as token_file:
-            token_file.write(creds.to_json())
-        print(f"YouTube OAuth: Token fetched and saved to {TOKEN_YOUTUBE_OAUTH_PATH}")
+        # Store credentials in memory (app_config.YOUTUBE_OAUTH_CREDENTIALS)
+        app_config.YOUTUBE_OAUTH_CREDENTIALS = creds
+        print(f"YouTube OAuth: Token fetched and stored in memory (app_config.YOUTUBE_OAUTH_CREDENTIALS).")
 
-        # Directly build the service with the new credentials and update config
+        # Optionally, for local development convenience, you might still want to save it.
+        # For Render, this file write should ideally be avoided if not using persistent disk.
+        # from config import TOKEN_YOUTUBE_OAUTH_PATH # Already imported via app_config
+        # try:
+        #     with open(app_config.TOKEN_YOUTUBE_OAUTH_PATH, 'w') as token_file:
+        #         token_file.write(creds.to_json())
+        #     print(f"YouTube OAuth: Token also saved to {app_config.TOKEN_YOUTUBE_OAUTH_PATH} for local persistence.")
+        # except Exception as e_save:
+        #     print(f"YouTube OAuth: Minor error saving token to file {app_config.TOKEN_YOUTUBE_OAUTH_PATH}: {e_save}")
+
+        # Directly build the service with the new in-memory credentials and update config
         try:
-            from googleapiclient.discovery import build
-            from services.youtube_uploader import API_SERVICE_NAME, API_VERSION # Get these constants
-            
-            app_config.YOUTUBE_SERVICE_CLIENT = build(API_SERVICE_NAME, API_VERSION, credentials=creds)
+            app_config.YOUTUBE_SERVICE_CLIENT = build(API_SERVICE_NAME, API_VERSION, credentials=app_config.YOUTUBE_OAUTH_CREDENTIALS)
             app_config.APP_STARTUP_STATUS["youtube_ready"] = True
             app_config.APP_STARTUP_STATUS["youtube_error_details"] = None
-            print("YouTube OAuth: YouTube service client created with new token and marked as ready.")
+            print("YouTube OAuth: YouTube service client created with new in-memory token and marked as ready.")
         except Exception as service_build_exc:
             print(f"ERROR: YouTube OAuth: Failed to build service client after fetching token: {service_build_exc}")
+            app_config.YOUTUBE_OAUTH_CREDENTIALS = None # Clear invalid in-memory creds if service build fails
+            app_config.YOUTUBE_SERVICE_CLIENT = None
             app_config.APP_STARTUP_STATUS["youtube_ready"] = False
             app_config.APP_STARTUP_STATUS["youtube_error_details"] = f"Failed to build service after token fetch: {service_build_exc}"
-            # Token is saved, but client creation failed. User might need to retry auth or app restart might fix.
 
         _youtube_oauth_flow = None # Clear the flow object
 
