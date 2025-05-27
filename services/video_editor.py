@@ -73,11 +73,13 @@ def merge_videos_and_replace_audio(background_tasks: BackgroundTasks, relative_r
     local_final_output_path = None # Keep track of the local final file before upload & cleanup
 
     try:
+        print(f"BACKGROUND TASK: VideoEditor: DEBUG - Top of try block for {recipe_db_id}")
         # ---- DIAGNOSTIC STEP: Use a fresh GDrive client for this background task ----
         print("BACKGROUND TASK: VideoEditor: Obtaining a fresh GDrive service client for this task.")
         # Call the new factory function to get a new instance for this task
         task_specific_gdrive_service = gdrive.create_gdrive_service() 
         # ---- END DIAGNOSTIC STEP ----
+        print(f"BACKGROUND TASK: VideoEditor: DEBUG - GDrive service client obtained for {recipe_db_id}")
 
         # Use the task_specific_gdrive_service for GDrive operations within this function
         app_data_folder_id = gdrive.get_or_create_app_data_folder_id(service=task_specific_gdrive_service)
@@ -92,6 +94,7 @@ def merge_videos_and_replace_audio(background_tasks: BackgroundTasks, relative_r
 
         ffmpeg_cmd = get_ffmpeg_tool_path("ffmpeg")
         ffprobe_cmd = get_ffmpeg_tool_path("ffprobe")
+        print(f"BACKGROUND TASK: VideoEditor: DEBUG - FFmpeg path: {ffmpeg_cmd}, FFprobe path: {ffprobe_cmd} for {recipe_db_id}")
 
         if not os.path.isdir(absolute_raw_clips_local_path):
             raise VideoEditingError(f"Absolute raw clips local dir not found: {absolute_raw_clips_local_path}")
@@ -110,25 +113,33 @@ def merge_videos_and_replace_audio(background_tasks: BackgroundTasks, relative_r
         
         clips_for_concat_list = []
         creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+        print(f"BACKGROUND TASK: VideoEditor: DEBUG - Starting clip preprocessing loop for {recipe_db_id}.")
 
         for clip_path in sorted(list(unique_clip_paths), key=natural_sort_key):
-            # ... (pre-processing logic remains the same, using local paths) ...
+            print(f"BACKGROUND TASK: VideoEditor: DEBUG - Processing clip: {clip_path} for {recipe_db_id}")
             duration = get_video_duration(clip_path, ffprobe_cmd)
             base_name = os.path.basename(clip_path)
-            if duration < MIN_CLIP_DURATION_SECONDS: continue
+            print(f"BACKGROUND TASK: VideoEditor: DEBUG - Clip: {base_name}, Duration: {duration}s for {recipe_db_id}")
+
+            if duration < MIN_CLIP_DURATION_SECONDS: 
+                print(f"BACKGROUND TASK: VideoEditor: DEBUG - Skipping clip {base_name} (too short) for {recipe_db_id}")
+                continue
             if duration < PREPROCESS_IF_SHORTER_THAN_SECONDS:
                 preprocessed_clip_name = f"preprocessed_{base_name}"
                 preprocessed_clip_path = os.path.join(temp_preprocess_dir_local, preprocessed_clip_name)
-                # ... (ffmpeg pre-process call) ...
                 preprocess_cmd_args = [ffmpeg_cmd, '-y', '-i', clip_path, '-c:v', 'libx264', '-preset', 'medium', '-crf', '22', '-pix_fmt', 'yuv420p', '-r', DEFAULT_PREPROCESS_FPS, '-s', DEFAULT_PREPROCESS_RESOLUTION, '-an', preprocessed_clip_path]
+                print(f"BACKGROUND TASK: VideoEditor: DEBUG - Preprocessing {base_name} with command: {' '.join(preprocess_cmd_args)} for {recipe_db_id}")
                 try:
                     subprocess.run(preprocess_cmd_args, check=True, capture_output=True, text=True, timeout=120, creationflags=creationflags)
+                    print(f"BACKGROUND TASK: VideoEditor: DEBUG - Preprocessing successful for {base_name} to {preprocessed_clip_path} for {recipe_db_id}")
                     clips_for_concat_list.append(preprocessed_clip_path)
                 except Exception as e_pre:
-                     print(f"BACKGROUND TASK: VideoEditor: WARN Pre-processing {base_name} failed: {e_pre}. Excluding.")
+                     print(f"BACKGROUND TASK: VideoEditor: WARN Pre-processing {base_name} failed: {e_pre}. Excluding for {recipe_db_id}.")
             else:
+                print(f"BACKGROUND TASK: VideoEditor: DEBUG - Adding original clip to list: {clip_path} for {recipe_db_id}")
                 clips_for_concat_list.append(clip_path)
         
+        print(f"BACKGROUND TASK: VideoEditor: DEBUG - Finished clip preprocessing loop for {recipe_db_id}. Clips for concat: {clips_for_concat_list}")
         if not clips_for_concat_list:
             raise VideoEditingError(f"No clips remaining after filtering/pre-processing.")
 
@@ -150,10 +161,15 @@ def merge_videos_and_replace_audio(background_tasks: BackgroundTasks, relative_r
         with open(list_file_path, 'w') as lf:
             for clip_path in clips_for_concat_list:
                 lf.write(f"file '{clip_path.replace(os.sep, '/')}'\n")
+        print(f"BACKGROUND TASK: VideoEditor: DEBUG - Created ffmpeg_filelist.txt at {list_file_path} for {recipe_db_id}")
         
         ffmpeg_merge_cmd_args = [ffmpeg_cmd, '-y', '-f', 'concat', '-safe', '0', '-i', list_file_path, '-c:v', 'libx264', '-preset', 'medium', '-crf', '23', '-pix_fmt', 'yuv420p', '-an', local_intermediate_merged_path]
+        print(f"BACKGROUND TASK: VideoEditor: DEBUG - Starting silent merge. Command: {' '.join(ffmpeg_merge_cmd_args)} for {recipe_db_id}")
         process = subprocess.Popen(ffmpeg_merge_cmd_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=creationflags)
+        
+        print(f"BACKGROUND TASK: VideoEditor: DEBUG - Waiting for silent merge FFmpeg process to complete (timeout 900s) for {recipe_db_id}...")
         stdout, stderr = process.communicate(timeout=900) # Allow 15 mins for merge
+        print(f"BACKGROUND TASK: VideoEditor: DEBUG - Silent merge FFmpeg process finished for {recipe_db_id}. RC: {process.returncode}")
         if process.returncode != 0:
             raise VideoEditingError(f"Main FFmpeg silent merge failed. RC: {process.returncode}\nStderr: {stderr[:1000]}")
         
@@ -167,10 +183,14 @@ def merge_videos_and_replace_audio(background_tasks: BackgroundTasks, relative_r
         if selected_music_path:
             audio_cmd_args = [ffmpeg_cmd, '-y', '-i', local_intermediate_merged_path, '-i', selected_music_path, '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-map', '0:v:0', '-map', '1:a:0', '-shortest', local_final_output_path]
         else:
+            print(f"BACKGROUND TASK: VideoEditor: DEBUG - No music file found, using sine wave for {recipe_db_id}.")
             audio_cmd_args = [ffmpeg_cmd, '-y', '-i', local_intermediate_merged_path, '-f', 'lavfi', '-i', "sine=frequency=1000", '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k', '-map', '0:v:0', '-map', '1:a:0', '-shortest', local_final_output_path]
         
+        print(f"BACKGROUND TASK: VideoEditor: DEBUG - Starting audio addition. Command: {' '.join(audio_cmd_args)} for {recipe_db_id}")
         audio_process = subprocess.Popen(audio_cmd_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=creationflags)
+        print(f"BACKGROUND TASK: VideoEditor: DEBUG - Waiting for audio addition FFmpeg process to complete (timeout 300s) for {recipe_db_id}...")
         audio_stdout, audio_stderr = audio_process.communicate(timeout=300)
+        print(f"BACKGROUND TASK: VideoEditor: DEBUG - Audio addition FFmpeg process finished for {recipe_db_id}. RC: {audio_process.returncode}")
         if audio_process.returncode != 0:
             # If audio fails, we might still consider the silent merged video as partially successful.
             # For now, let's treat it as a full merge failure if audio can't be added.
@@ -191,6 +211,7 @@ def merge_videos_and_replace_audio(background_tasks: BackgroundTasks, relative_r
             service=task_specific_gdrive_service,
             existing_file_id=existing_gdrive_file_id
         )
+        print(f"BACKGROUND TASK: VideoEditor: DEBUG - GDrive upload attempt finished for {recipe_db_id}. GDrive File ID: {final_merged_gdrive_file_id}")
         if not final_merged_gdrive_file_id:
             raise VideoEditingError(f"Failed to upload merged video to Google Drive.")
         
@@ -202,10 +223,15 @@ def merge_videos_and_replace_audio(background_tasks: BackgroundTasks, relative_r
         error_message_on_exit = str(ve)
         print(f"BACKGROUND TASK: VideoEditor: VideoEditingError: {error_message_on_exit}")
     except Exception as e:
-        error_message_on_exit = f"Overall error in VideoEditor: {str(e)}"
+        error_message_on_exit = f"Overall error in VideoEditor for {recipe_db_id}: {str(e)} - Type: {type(e).__name__}"
+        import traceback
+        print(f"BACKGROUND TASK: VideoEditor: TRACEBACK for {recipe_db_id} ---")
+        traceback.print_exc()
+        print(f"BACKGROUND TASK: VideoEditor: --- END TRACEBACK for {recipe_db_id}")
         print(f"BACKGROUND TASK: VideoEditor: Unexpected Exception: {error_message_on_exit}")
     
     finally:
+        print(f"BACKGROUND TASK: VideoEditor: DEBUG - Entering finally block for {recipe_db_id}.")
         kwargs_for_status_update = {}
         if final_merged_gdrive_file_id and current_db_status_on_exit == "MERGED":
             kwargs_for_status_update['merged_video_gdrive_id'] = final_merged_gdrive_file_id
@@ -226,13 +252,16 @@ def merge_videos_and_replace_audio(background_tasks: BackgroundTasks, relative_r
             try:
                 if os.path.exists(item_path):
                     if os.path.isdir(item_path):
+                        print(f"BACKGROUND TASK: VideoEditor: DEBUG - Attempting to delete directory: {item_path} for {recipe_db_id}")
                         shutil.rmtree(item_path)
                     else:
+                        print(f"BACKGROUND TASK: VideoEditor: DEBUG - Attempting to delete file: {item_path} for {recipe_db_id}")
                         os.remove(item_path)
                     print(f"BACKGROUND TASK: VideoEditor: Cleaned local temp: {item_path}")
             except Exception as e_clean:
-                print(f"BACKGROUND TASK: VideoEditor: WARN Failed to clean local temp {item_path}: {e_clean}")
+                print(f"BACKGROUND TASK: VideoEditor: WARN Failed to clean local temp {item_path} for {recipe_db_id}: {e_clean}")
         
+        print(f"BACKGROUND TASK: VideoEditor: DEBUG - Finished cleanup for {recipe_db_id}.")
         # The calling background task manager in routes/upload.py 
         # will use trigger_next_background_task if this step was successful.
         
