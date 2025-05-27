@@ -10,6 +10,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaIoBaseDownload
 import io
+import sys # Import sys for sys.exit()
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from utils import load_db, update_recipe_status
@@ -221,10 +222,10 @@ if __name__ == '__main__':
     APP_DATA_FOLDER_ID_TEST = None # To be set after creating/getting it
     try:
         # Test: Get or create app data folder
-        app_data_folder_id_test = get_or_create_app_data_folder_id()
+        app_data_folder_id_test = get_or_create_app_data_folder_id() # Assuming this might call get_gdrive_service if not passed
         if not app_data_folder_id_test:
             print("CRITICAL TEST ERROR: Could not get or create App Data Folder in GDrive. Aborting further GDrive tests.")
-            return
+            sys.exit(1) # Use sys.exit(1) to indicate an error exit
         APP_DATA_FOLDER_ID_TEST = app_data_folder_id_test
         print(f"Test: App Data Folder ID: {APP_DATA_FOLDER_ID_TEST}")
 
