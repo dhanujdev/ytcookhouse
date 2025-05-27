@@ -107,21 +107,41 @@ _youtube_oauth_flow = None
 @router.get("/authorize_youtube", name="authorize_youtube_route")
 async def authorize_youtube(request: Request):
     global _youtube_oauth_flow
-    from config import CLIENT_SECRET_YOUTUBE_PATH
-    from services.youtube_uploader import SCOPES_YOUTUBE # Import from correct location
-    from google_auth_oauthlib.flow import Flow # Use Flow for web apps
-
-    if not os.path.exists(CLIENT_SECRET_YOUTUBE_PATH):
-        raise HTTPException(status_code=500, detail="YouTube client secret file not found.")
+    from config import CLIENT_SECRET_YOUTUBE_PATH # Fallback for local dev
+    from services.youtube_uploader import SCOPES_YOUTUBE 
+    from google_auth_oauthlib.flow import Flow 
+    import json # Required for parsing JSON from env var
 
     # The redirect_uri must match one of the "Authorized redirect URIs" in your Google Cloud Console
     redirect_uri = request.url_for('oauth2callback_youtube_route')
-    
-    _youtube_oauth_flow = Flow.from_client_secrets_file(
-        CLIENT_SECRET_YOUTUBE_PATH,
-        scopes=SCOPES_YOUTUBE,
-        redirect_uri=redirect_uri
-    )
+
+    client_config_json_str = os.getenv("GOOGLE_CLIENT_SECRET_JSON_YOUTUBE")
+
+    if client_config_json_str:
+        print("YouTube OAuth: Loading client config from GOOGLE_CLIENT_SECRET_JSON_YOUTUBE env var.")
+        try:
+            client_config_dict = json.loads(client_config_json_str)
+            _youtube_oauth_flow = Flow.from_client_config(
+                client_config_dict,
+                scopes=SCOPES_YOUTUBE,
+                redirect_uri=redirect_uri
+            )
+        except json.JSONDecodeError as e:
+            print(f"ERROR: Failed to parse GOOGLE_CLIENT_SECRET_JSON_YOUTUBE: {e}")
+            raise HTTPException(status_code=500, detail="Invalid YouTube client secret config in environment.")
+        except Exception as e:
+            print(f"ERROR: Failed to create Flow from client_config_dict: {e}")
+            raise HTTPException(status_code=500, detail="Error creating OAuth flow from environment config.")
+    elif os.path.exists(CLIENT_SECRET_YOUTUBE_PATH):
+        print(f"YouTube OAuth: Loading client config from file: {CLIENT_SECRET_YOUTUBE_PATH}")
+        _youtube_oauth_flow = Flow.from_client_secrets_file(
+            CLIENT_SECRET_YOUTUBE_PATH,
+            scopes=SCOPES_YOUTUBE,
+            redirect_uri=redirect_uri
+        )
+    else:
+        print("ERROR: YouTube client secret (env var or file) not found.")
+        raise HTTPException(status_code=500, detail="YouTube client secret configuration not found.")
     
     authorization_url, state = _youtube_oauth_flow.authorization_url(
         access_type='offline',
