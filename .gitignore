@@ -33,3 +33,8 @@ db.json
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Ignore large video files from the moved 'barged_api - Copy'
+unused/barged_api - Copy/videos/merged/*.mp4
+unused/barged_api - Copy/videos/raw/Fish_Pulusu_gdriveTest/*.mp4
+unused/barged_api - Copy/videos/raw/Mutton_Pulao/*.mp4

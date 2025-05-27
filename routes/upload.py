@@ -4,8 +4,16 @@ from fastapi.templating import Jinja2Templates
 import os
 import json
 import sys
+import asyncio # Added for Semaphore
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+# Concurrency control for video processing tasks
+MAX_CONCURRENT_VIDEO_TASKS = 1  # Start with 1 for safety on free tier
+VIDEO_TASK_SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_VIDEO_TASKS)
+# Optional: To track active tasks for debugging or more advanced logic
+CURRENT_ACTIVE_VIDEO_TASK_COUNT = 0
+# ACTIVE_PROCESSING_RECIPE_ID = None # Can be added if needed for UI feedback
 
 from services import gdrive, video_editor, gemini, youtube_uploader
 from services.gemini import GeminiServiceError
@@ -21,6 +29,51 @@ router = APIRouter()
 # TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), '..', 'templates')
 # templates = Jinja2Templates(directory=TEMPLATES_DIR)
 from templating import templates # Import the templates instance from templating.py
+
+
+async def run_video_editing_task(
+    background_tasks_obj_from_editor_param: BackgroundTasks, 
+    relative_clips_path_from_db_val: str, 
+    recipe_id_val: str, 
+    recipe_name_orig_val: str
+):
+    global CURRENT_ACTIVE_VIDEO_TASK_COUNT
+    
+    task_acquired = False
+    try:
+        print(f"Attempting to acquire semaphore for video editing: {recipe_id_val} ({recipe_name_orig_val}). Current active: {CURRENT_ACTIVE_VIDEO_TASK_COUNT}")
+        await VIDEO_TASK_SEMAPHORE.acquire()
+        task_acquired = True
+        CURRENT_ACTIVE_VIDEO_TASK_COUNT += 1
+        print(f"Semaphore ACQUIRED for recipe {recipe_id_val}. Active video tasks: {CURRENT_ACTIVE_VIDEO_TASK_COUNT}")
+        
+        # Note: video_editor.merge_videos_and_replace_audio is a synchronous function.
+        # FastAPI's background_tasks.add_task runs it in a threadpool.
+        # The semaphore here limits how many such blocking tasks are initiated.
+        video_editor.merge_videos_and_replace_audio(
+            background_tasks_obj_from_editor_param, 
+            relative_clips_path_from_db_val, 
+            recipe_id_val, 
+            recipe_name_orig_val
+        )
+        # The merge_videos_and_replace_audio function itself handles DB status updates for MERGED or MERGE_FAILED.
+        # It also chains the metadata generation task.
+        
+    except Exception as e:
+        print(f"ERROR during semaphore-wrapped video processing for {recipe_id_val}: {e}")
+        # Ensure status is updated to reflect failure if the task itself doesn't catch and update
+        # This is a fallback error state.
+        update_recipe_status(
+            recipe_id=recipe_id_val, 
+            name=recipe_name_orig_val, 
+            status="MERGE_FAILED", 
+            error_message=f"Video processing supervisor error: {str(e)}"
+        )
+    finally:
+        if task_acquired:
+            CURRENT_ACTIVE_VIDEO_TASK_COUNT -= 1
+            VIDEO_TASK_SEMAPHORE.release()
+            print(f"Semaphore RELEASED for recipe {recipe_id_val}. Active video tasks: {CURRENT_ACTIVE_VIDEO_TASK_COUNT}")
 
 # --- Helper function to trigger next step in the background ---
 def trigger_next_background_task(background_tasks: BackgroundTasks, recipe_id: str):
@@ -58,9 +111,17 @@ def trigger_next_background_task(background_tasks: BackgroundTasks, recipe_id: s
         if relative_clips_path_from_db and path_exists: 
             print(f"BACKGROUND_TRIGGER: Triggering MERGING for {recipe_id} using relative path '{relative_clips_path_from_db}' (resolved to '{absolute_clips_path}')")
             update_recipe_status(recipe_id=recipe_id, name=recipe_name_orig, status="MERGING")
-            # Pass background_tasks object as the first argument to the video_editor function
-            background_tasks.add_task(video_editor.merge_videos_and_replace_audio, background_tasks, relative_clips_path_from_db, recipe_id, recipe_name_orig)
-            print(f"BACKGROUND_TRIGGER: MERGING task for {recipe_id} (which includes auto-trigger for metadata) ADDED to background_tasks.")
+            # Use the new wrapper for concurrency control
+            # The `background_tasks` object from this function's signature is the one that the editor needs for its *own* potential chaining.
+            current_route_background_tasks_obj = background_tasks 
+            background_tasks.add_task(
+                run_video_editing_task,
+                current_route_background_tasks_obj, # Passed to the wrapper, then to video_editor
+                relative_clips_path_from_db,
+                recipe_id,
+                recipe_name_orig
+            )
+            print(f"BACKGROUND_TRIGGER: Video editing task for {recipe_id} ADDED to background_tasks via wrapper.")
         else:
             err_msg = f"Automated MERGE trigger for '{recipe_name_orig}' ({recipe_id}) failed. Relative path '{relative_clips_path_from_db}' (resolved to '{absolute_clips_path}', exists: {path_exists}) not valid."
             print(f"BACKGROUND_TRIGGER: ERROR - {err_msg}")
@@ -107,7 +168,7 @@ _youtube_oauth_flow = None
 @router.get("/authorize_youtube", name="authorize_youtube_route")
 async def authorize_youtube(request: Request):
     global _youtube_oauth_flow
-    from config import CLIENT_SECRET_YOUTUBE_PATH # Fallback for local dev
+    # from config import CLIENT_SECRET_YOUTUBE_PATH # No longer using file fallback
     from services.youtube_uploader import SCOPES_YOUTUBE 
     from google_auth_oauthlib.flow import Flow 
     import json # Required for parsing JSON from env var
@@ -117,31 +178,24 @@ async def authorize_youtube(request: Request):
 
     client_config_json_str = os.getenv("GOOGLE_CLIENT_SECRET_JSON_YOUTUBE")
 
-    if client_config_json_str:
-        print("YouTube OAuth: Loading client config from GOOGLE_CLIENT_SECRET_JSON_YOUTUBE env var.")
-        try:
-            client_config_dict = json.loads(client_config_json_str)
-            _youtube_oauth_flow = Flow.from_client_config(
-                client_config_dict,
-                scopes=SCOPES_YOUTUBE,
-                redirect_uri=redirect_uri
-            )
-        except json.JSONDecodeError as e:
-            print(f"ERROR: Failed to parse GOOGLE_CLIENT_SECRET_JSON_YOUTUBE: {e}")
-            raise HTTPException(status_code=500, detail="Invalid YouTube client secret config in environment.")
-        except Exception as e:
-            print(f"ERROR: Failed to create Flow from client_config_dict: {e}")
-            raise HTTPException(status_code=500, detail="Error creating OAuth flow from environment config.")
-    elif os.path.exists(CLIENT_SECRET_YOUTUBE_PATH):
-        print(f"YouTube OAuth: Loading client config from file: {CLIENT_SECRET_YOUTUBE_PATH}")
-        _youtube_oauth_flow = Flow.from_client_secrets_file(
-            CLIENT_SECRET_YOUTUBE_PATH,
+    if not client_config_json_str:
+        print("ERROR: YouTube client secret GOOGLE_CLIENT_SECRET_JSON_YOUTUBE env var not found.")
+        raise HTTPException(status_code=500, detail="YouTube client secret configuration not found in environment variables.")
+
+    print("YouTube OAuth: Loading client config from GOOGLE_CLIENT_SECRET_JSON_YOUTUBE env var.")
+    try:
+        client_config_dict = json.loads(client_config_json_str)
+        _youtube_oauth_flow = Flow.from_client_config(
+            client_config_dict,
             scopes=SCOPES_YOUTUBE,
             redirect_uri=redirect_uri
         )
-    else:
-        print("ERROR: YouTube client secret (env var or file) not found.")
-        raise HTTPException(status_code=500, detail="YouTube client secret configuration not found.")
+    except json.JSONDecodeError as e:
+        print(f"ERROR: Failed to parse GOOGLE_CLIENT_SECRET_JSON_YOUTUBE: {e}")
+        raise HTTPException(status_code=500, detail="Invalid YouTube client secret config in environment.")
+    except Exception as e:
+        print(f"ERROR: Failed to create Flow from client_config_dict: {e}")
+        raise HTTPException(status_code=500, detail="Error creating OAuth flow from environment config.")
     
     authorization_url, state = _youtube_oauth_flow.authorization_url(
         access_type='offline',
@@ -253,9 +307,18 @@ async def fetch_clips_route(background_tasks: BackgroundTasks, folder_id: str = 
             return RedirectResponse(url=f"/select_folder?error={error_msg}", status_code=303)
 
         update_recipe_status(recipe_id=folder_id, name=folder_name, status="MERGING") 
-        # Pass background_tasks object as the first argument to the video_editor function
-        background_tasks.add_task(video_editor.merge_videos_and_replace_audio, background_tasks, relative_clips_path_from_db, folder_id, folder_name)
+        # Use the new wrapper for concurrency control
+        # The `background_tasks` object from this route's signature is the one that the editor needs for its *own* potential chaining.
+        current_route_background_tasks_obj = background_tasks
+        background_tasks.add_task(
+            run_video_editing_task,
+            current_route_background_tasks_obj, # Passed to the wrapper, then to video_editor
+            relative_clips_path_from_db,
+            folder_id,
+            folder_name
+        )
         msg = f"Clips for '{folder_name}' downloaded. Full processing (merge & metadata) started."
+        print(f"ROUTE /fetch_clips: Video editing task for {folder_name} ({folder_id}) ADDED to background_tasks via wrapper.")
         return RedirectResponse(url=f"/select_folder?message={msg}", status_code=303)
     else:
         # If status is not DOWNLOADED, it implies a failure during download (e.g., DOWNLOAD_FAILED)

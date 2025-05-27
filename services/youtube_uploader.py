@@ -18,7 +18,7 @@ from config import (
     # ---- Added for Refactoring ----
     # YOUTUBE_SERVICE_CLIENT, # No longer managing shared client within this module for OAuth user flow
     APP_STARTUP_STATUS,      # For updating status during checks
-    CLIENT_SECRET_YOUTUBE_PATH, # Path to client_secret.json
+    # CLIENT_SECRET_YOUTUBE_PATH, # No longer using file path for YouTube client secret
     TOKEN_YOUTUBE_OAUTH_PATH,   # Path to store/load user tokens
     YOUTUBE_AUTH_METHOD         # To decide auth flow
 )
@@ -52,11 +52,30 @@ def create_youtube_service(redirect_uri: str = None): # redirect_uri needed for 
     creds = None
     print(f"YouTube OAuth: Attempting to get credentials. Configured method: {YOUTUBE_AUTH_METHOD}")
 
-    if not os.path.exists(CLIENT_SECRET_YOUTUBE_PATH):
-        msg = f"YouTube OAuth Error: client_secret.json not found at {CLIENT_SECRET_YOUTUBE_PATH}"
+    client_config_dict_from_env = None
+    client_config_json_str_env = os.getenv("GOOGLE_CLIENT_SECRET_JSON_YOUTUBE")
+
+    if not client_config_json_str_env:
+        msg = "YouTube OAuth Error: GOOGLE_CLIENT_SECRET_JSON_YOUTUBE environment variable not set."
         print(f"ERROR: {msg}")
-        # Update startup status if this happens during initial creation by startup event
-        if APP_STARTUP_STATUS.get("youtube_error_details") is None: # Check if error already set by another part
+        if APP_STARTUP_STATUS.get("youtube_error_details") is None: 
+             APP_STARTUP_STATUS["youtube_error_details"] = msg
+        raise YouTubeUploaderError(msg)
+    
+    print("YouTube OAuth (create_youtube_service): Loading client config from GOOGLE_CLIENT_SECRET_JSON_YOUTUBE env var.")
+    try:
+        client_config_dict_from_env = json.loads(client_config_json_str_env)
+    except json.JSONDecodeError as e:
+        msg = f"YouTube OAuth Error: Failed to parse GOOGLE_CLIENT_SECRET_JSON_YOUTUBE: {e}"
+        print(f"ERROR: {msg}")
+        if APP_STARTUP_STATUS.get("youtube_error_details") is None: 
+             APP_STARTUP_STATUS["youtube_error_details"] = msg
+        raise YouTubeUploaderError(msg)
+    
+    if not client_config_dict_from_env: # Should be caught by previous checks, but as a safeguard
+        msg = "YouTube OAuth Error: Client config could not be loaded from GOOGLE_CLIENT_SECRET_JSON_YOUTUBE."
+        print(f"ERROR: {msg}")
+        if APP_STARTUP_STATUS.get("youtube_error_details") is None: 
              APP_STARTUP_STATUS["youtube_error_details"] = msg
         raise YouTubeUploaderError(msg)
 
@@ -103,7 +122,12 @@ def create_youtube_service(redirect_uri: str = None): # redirect_uri needed for 
                     APP_STARTUP_STATUS["youtube_error_details"] = msg
                 raise YouTubeUploaderError(msg) # Or could raise YouTubeNeedsAuthorization here if preferred for startup
 
-            flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRET_YOUTUBE_PATH, SCOPES_YOUTUBE)
+            # Use client_config_dict_from_env (must be available at this point)
+            if not client_config_dict_from_env: # This should be an impossible state if logic above is correct
+                raise YouTubeUploaderError("Critical: YouTube client secret config from ENV VAR missing for flow initiation.")
+            
+            flow = InstalledAppFlow.from_client_config(client_config_dict_from_env, SCOPES_YOUTUBE)
+            
             flow.redirect_uri = redirect_uri # Set the redirect URI for the web flow
             
             authorization_url, state = flow.authorization_url(

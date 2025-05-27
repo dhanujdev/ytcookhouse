@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Preview Video & Metadata - {{ recipe_name_safe }} - Barged API</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; background-color: #f4f4f4; }
+        .container { background-color: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        h1, h2 { color: #333; }
+        video { max-width: 100%; border-radius: 4px; margin-bottom: 15px; }
+        textarea { width: 98%; padding: 10px; margin-bottom: 10px; border: 1px solid #ddd; border-radius: 4px; font-family: inherit; }
+        input[type="text"] { width: 98%; padding: 10px; margin-bottom: 10px; border: 1px solid #ddd; border-radius: 4px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        .form-group { margin-bottom: 15px; }
+        .button { background-color: #007bff; color: white; padding: 10px 15px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; }
+        .button:hover { background-color: #0056b3; }
+        .metadata-section { margin-top: 20px; }
+        pre { background-color: #eee; padding: 10px; border-radius: 4px; white-space: pre-wrap; word-wrap: break-word; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Preview for: {{ recipe_name_display if recipe_name_display else recipe_name_safe }}</h1>
+
+        {% if error_message %}
+            <p style="color: red;"><strong>Error:</strong> {{ error_message }}</p>
+            <p><a href="/select_folder">Back to Folder Selection</a></p>
+        {% elif video_path and metadata %}
+            <h2>Video Preview</h2>
+            <!-- 
+                IMPORTANT: The video_url here needs to be a URL accessible by the browser.
+                If video_path is a local server path, FastAPI needs to serve these files.
+                This will be handled by adding a static route for the 'videos' directory.
+            -->
+            <video controls width="640" height="360" src="{{ video_url }}">
+                Your browser does not support the video tag.
+            </video>
+            <p>Video source: {{ video_url }}</p>
+
+            <hr>
+
+            <h2>Generated YouTube Metadata</h2>
+            <form action="/upload_youtube" method="post">
+                <!-- Hidden fields for data submission -->
+                <input type="hidden" name="recipe_db_id" value="{{ recipe_db_id }}"> <!-- ADDED THIS LINE -->
+                <input type="hidden" name="recipe_name_safe" value="{{ recipe_name_safe }}">
+                <input type="hidden" name="video_file_path" value="{{ video_path }}">
+                <input type="hidden" name="metadata_file_path" value="{{ metadata.file_path if metadata.file_path else '' }}">
+
+                <div class="form-group">
+                    <label for="title">Title:</label>
+                    <input type="text" id="title" name="title" value="{{ metadata.title }}" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="description">Description:</label>
+                    <textarea id="description" name="description" rows="10" required>{{ metadata.description }}</textarea>
+                </div>
+
+                <div class="form-group">
+                    <label for="tags">Tags (comma-separated):</label>
+                    <input type="text" id="tags" name="tags" value="{{ metadata.tags | join(', ') }}">
+                </div>
+                
+                <div class="metadata-section">
+                    <h3>Chapters (for reference, not directly editable here as simple form fields):</h3>
+                    {% if metadata.chapters %}
+                        <ul>
+                        {% for chapter in metadata.chapters %}
+                            <li>{{ chapter.time }} - {{ chapter.label }}</li>
+                        {% endfor %}
+                        </ul>
+                    {% else %}
+                        <p>No chapters generated.</p>
+                    {% endif %}
+                </div>
+
+                <div class="metadata-section">
+                    <h3>Transcript (first few lines for reference):</h3>
+                    <pre>{{ metadata.transcript | truncate(300, True) if metadata.transcript else 'No transcript generated.' }}</pre>
+                </div>
+                
+                <hr>
+                <button type="submit" class="button">Looks Good! Submit to YouTube</button>
+            </form>
+            
+            <p style="margin-top: 20px;"><a href="/select_folder">Process another folder</a></p>
+        {% else %}
+            <p>Could not load video or metadata for preview.</p>
+            <p><a href="/select_folder">Back to Folder Selection</a></p>
+        {% endif %}
+    </div>
+</body>
+</html>

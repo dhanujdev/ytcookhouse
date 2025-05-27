@@ -33,7 +33,17 @@ def get_video_duration(video_path: str, ffprobe_cmd: str) -> float:
         creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
         result = subprocess.run(command, capture_output=True, text=True, check=True, creationflags=creationflags)
         return float(result.stdout.strip()) if result.stdout.strip() and result.stdout.strip() != "N/A" else 0.0
-    except Exception:
+    except subprocess.CalledProcessError as e:
+        print(f"FFprobe error getting duration for {video_path}: {e.stderr}")
+        return 0.0
+    except FileNotFoundError:
+        print(f"FFprobe command '{ffprobe_cmd}' not found while getting duration for {video_path}.")
+        return 0.0
+    except ValueError:
+        print(f"Could not convert FFprobe duration output to float for {video_path}.")
+        return 0.0
+    except Exception as e: # Catch any other unexpected error
+        print(f"Unexpected error in get_video_duration for {video_path}: {e}")
         return 0.0
 
 def natural_sort_key(s):

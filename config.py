@@ -128,11 +128,11 @@ APP_STARTUP_STATUS = {
 # --- In-Memory DB Cache Configuration (Added for Refactoring) ---
 CACHED_DB_CONTENT = None
 DB_CACHE_TIMESTAMP = None 
-DB_CACHE_DURATION_SECONDS = 15 # Cache DB content for 15 seconds by default
+DB_CACHE_DURATION_SECONDS = 1800 # Cache DB content for 30 minutes by default
 
 # --- YouTube OAuth User Consent Configuration ---
-# Path to the client secret file downloaded from Google Cloud Console for YouTube API (OAuth Web App)
-CLIENT_SECRET_YOUTUBE_PATH = os.path.join(APP_ROOT_DIR, "client_secret_youtube.json")
+# CLIENT_SECRET_YOUTUBE_PATH is no longer used directly for YouTube client secret.
+# Configuration is expected via GOOGLE_CLIENT_SECRET_JSON_YOUTUBE environment variable.
 
 # --- Path to store the user's OAuth token after they grant consent (Made environment-aware) ---
 TOKEN_YOUTUBE_OAUTH_FILENAME = "token_youtube_oauth.json"
