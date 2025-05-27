@@ -14,9 +14,10 @@ from config import (
     DB_CACHE_TIMESTAMP,
     DB_CACHE_DURATION_SECONDS,
     # ---- Import the shared GDrive client ----
-    GDRIVE_SERVICE_CLIENT
+    # GDRIVE_SERVICE_CLIENT # We will import config module instead
     # -----------------------------------------
 )
+import config # Import the config module to access its attributes
 # from services import gdrive # No longer import the whole module for get_gdrive_service here
 
 # DB_FILE_PATH is no longer a static local path. db.json lives on Google Drive.
@@ -39,12 +40,12 @@ def load_db() -> dict:
     # If cache miss or expired, load from Google Drive
     print("UTILS: Attempting to load DB from Google Drive...")
     try:
-        # Use the shared GDrive client from config
-        if not GDRIVE_SERVICE_CLIENT:
+        # Use the shared GDrive client from config module
+        if not config.GDRIVE_SERVICE_CLIENT:
             print("UTILS: ERROR - Shared GDrive service client not available. Cannot load DB.")
             # Fallback to a temporary in-memory DB if GDrive client is not initialized
             return {"recipes": {}, "last_gdrive_scan": None, "gdrive_error": "Shared GDrive client not initialized"}
-        service = GDRIVE_SERVICE_CLIENT 
+        service = config.GDRIVE_SERVICE_CLIENT 
         
         # Since get_or_create_app_data_folder_id is part of gdrive.py, we still need gdrive module for it.
         # Let's ensure gdrive services is imported for its helper functions.
@@ -92,10 +93,10 @@ def save_db(db_content: dict):
 
     print("UTILS: Attempting to save DB to Google Drive...")
     try:
-        if not GDRIVE_SERVICE_CLIENT:
+        if not config.GDRIVE_SERVICE_CLIENT:
             print("UTILS: ERROR - Shared GDrive service client not available. Cannot save DB.")
             return # Or raise an error
-        service = GDRIVE_SERVICE_CLIENT
+        service = config.GDRIVE_SERVICE_CLIENT
 
         from services import gdrive # For gdrive.get_or_create_app_data_folder_id etc.
         app_data_folder_id = gdrive.get_or_create_app_data_folder_id(service=service)

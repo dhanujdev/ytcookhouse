@@ -96,15 +96,14 @@ def check_gdrive_service(service_client) -> bool:
         return False
 
 def find_file_id_by_name(parent_folder_id: str, filename: str, service=None):
-    if not service:
-        from config import GDRIVE_SERVICE_CLIENT
-        service = GDRIVE_SERVICE_CLIENT
-        if not service:
-            # This case should ideally not be hit if startup sequence is robust
-            # and this function is called after startup within main app context.
-            # For background tasks, they should explicitly pass a service instance.
-            print("ERROR: GDRIVE_SERVICE_CLIENT not initialized when called from find_file_id_by_name without service arg.")
-            raise GDriveServiceError("Shared GDrive client not initialized.")
+    service_to_use = service
+    if not service_to_use:
+        import config # Import the module itself
+        service_to_use = config.GDRIVE_SERVICE_CLIENT # Access the variable via the module
+        if not service_to_use:
+            error_msg = "Shared GDrive client not initialized. Called from find_file_id_by_name."
+            print(f"ERROR: {error_msg}")
+            raise GDriveServiceError(error_msg)
     try:
         query = f"name = '{filename}' and '{parent_folder_id}' in parents and trashed = false"
         response = service.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
@@ -115,11 +114,14 @@ def find_file_id_by_name(parent_folder_id: str, filename: str, service=None):
     return None
 
 def get_or_create_app_data_folder_id(service=None):
-    if not service:
-        from config import GDRIVE_SERVICE_CLIENT
-        service = GDRIVE_SERVICE_CLIENT
-        if not service:
-            raise GDriveServiceError("Shared GDrive client not initialized. Called from get_or_create_app_data_folder_id.")
+    service_to_use = service
+    if not service_to_use:
+        import config # Import the module itself
+        service_to_use = config.GDRIVE_SERVICE_CLIENT # Access the variable via the module
+        if not service_to_use:
+            error_msg = "Shared GDrive client not initialized. Called from get_or_create_app_data_folder_id."
+            print(f"ERROR: {error_msg}")
+            raise GDriveServiceError(error_msg)
     
     if not GOOGLE_DRIVE_APP_DATA_FOLDER_NAME:
         raise GDriveServiceError("GOOGLE_DRIVE_APP_DATA_FOLDER_NAME is not set in config.")
@@ -150,11 +152,14 @@ def get_or_create_app_data_folder_id(service=None):
         raise GDriveServiceError(f"Unexpected error in get_or_create_app_data_folder_id for '{GOOGLE_DRIVE_APP_DATA_FOLDER_NAME}': {e}")
 
 def upload_file_to_drive(local_file_path: str, drive_folder_id: str, drive_filename: str, mimetype: str = 'application/octet-stream', existing_file_id: str = None, service=None):
-    if not service:
-        from config import GDRIVE_SERVICE_CLIENT
-        service = GDRIVE_SERVICE_CLIENT
-        if not service:
-            raise GDriveServiceError("Shared GDrive client not initialized. Called from upload_file_to_drive.")
+    service_to_use = service
+    if not service_to_use:
+        import config # Import the module itself
+        service_to_use = config.GDRIVE_SERVICE_CLIENT # Access the variable via the module
+        if not service_to_use:
+            error_msg = "Shared GDrive client not initialized. Called from upload_file_to_drive."
+            print(f"ERROR: {error_msg}")
+            raise GDriveServiceError(error_msg)
     try:
         file_metadata = {'name': drive_filename}
         if not existing_file_id: 
@@ -181,13 +186,16 @@ def upload_file_to_drive(local_file_path: str, drive_folder_id: str, drive_filen
         raise GDriveServiceError(f"Unexpected error uploading file '{drive_filename}': {e}")
 
 def get_file_content_from_drive(file_id: str, service=None) -> str | None:
-    if not service:
-        from config import GDRIVE_SERVICE_CLIENT
-        service = GDRIVE_SERVICE_CLIENT
-        if not service:
-            raise GDriveServiceError("Shared GDrive client not initialized. Called from get_file_content_from_drive.")
+    service_to_use = service
+    if not service_to_use:
+        import config # Import the module itself
+        service_to_use = config.GDRIVE_SERVICE_CLIENT # Access the variable via the module
+        if not service_to_use:
+            error_msg = "Shared GDrive client not initialized. Called from get_file_content_from_drive."
+            print(f"ERROR: {error_msg}")
+            raise GDriveServiceError(error_msg)
     try:
-        request = service.files().get_media(fileId=file_id)
+        request = service_to_use.files().get_media(fileId=file_id)
         fh = io.BytesIO()
         downloader = MediaIoBaseDownload(fh, request)
         done = False
@@ -206,11 +214,14 @@ def get_file_content_from_drive(file_id: str, service=None) -> str | None:
         raise GDriveServiceError(f"Unexpected error downloading file content for ID '{file_id}': {e}")
 
 def get_or_create_recipe_subfolder_id(app_data_folder_id: str, recipe_id: str, subfolder_name: str, service=None):
-    if not service:
-        from config import GDRIVE_SERVICE_CLIENT
-        service = GDRIVE_SERVICE_CLIENT
-        if not service:
-            raise GDriveServiceError("Shared GDrive client not initialized. Called from get_or_create_recipe_subfolder_id.")
+    service_to_use = service
+    if not service_to_use:
+        import config # Import the module itself
+        service_to_use = config.GDRIVE_SERVICE_CLIENT # Access the variable via the module
+        if not service_to_use:
+            error_msg = "Shared GDrive client not initialized. Called from get_or_create_recipe_subfolder_id."
+            print(f"ERROR: {error_msg}")
+            raise GDriveServiceError(error_msg)
     gd_subfolder_name = f"{recipe_id}_{subfolder_name}"
     query = f"name='{gd_subfolder_name}' and mimeType='application/vnd.google-apps.folder' and '{app_data_folder_id}' in parents and trashed=false"
     try:
@@ -231,13 +242,16 @@ def get_or_create_recipe_subfolder_id(app_data_folder_id: str, recipe_id: str, s
         raise GDriveServiceError(f"Failed to get/create recipe subfolder '{gd_subfolder_name}': {error}")
 
 def download_file_from_drive(file_id: str, local_download_path: str, service=None) -> bool:
-    if not service:
-        from config import GDRIVE_SERVICE_CLIENT
-        service = GDRIVE_SERVICE_CLIENT
-        if not service:
-            raise GDriveServiceError("Shared GDrive client not initialized. Called from download_file_from_drive.")
+    service_to_use = service
+    if not service_to_use:
+        import config # Import the module itself
+        service_to_use = config.GDRIVE_SERVICE_CLIENT # Access the variable via the module
+        if not service_to_use:
+            error_msg = "Shared GDrive client not initialized. Called from download_file_from_drive."
+            print(f"ERROR: {error_msg}")
+            raise GDriveServiceError(error_msg)
     try:
-        request = service.files().get_media(fileId=file_id)
+        request = service_to_use.files().get_media(fileId=file_id)
         fh = io.BytesIO()
         downloader = MediaIoBaseDownload(fh, request)
         done = False
@@ -272,15 +286,12 @@ def list_folders_from_gdrive_and_db_status():
         return []
 
     try:
-        from config import GDRIVE_SERVICE_CLIENT
-        # This function is typically called from routes that should use the shared client.
-        service_to_use = GDRIVE_SERVICE_CLIENT
+        import config # Import the module itself
+        service_to_use = config.GDRIVE_SERVICE_CLIENT # Access the variable via the module
         if not service_to_use:
-             # Fallback or error if called too early / in wrong context
-            print("WARNING: list_folders_from_gdrive_and_db_status called when shared GDrive client is not ready. Attempting to create one.")
-            # This creates a temporary client for this call if the shared one isn't ready.
-            # Ideally, this function is called by routes that can rely on the startup-initialized client.
-            service_to_use = create_gdrive_service() 
+            error_msg = "Shared GDrive client not initialized. Called from list_folders_from_gdrive_and_db_status."
+            print(f"ERROR: {error_msg}")
+            raise GDriveServiceError(error_msg)
         
         query = f"'{GDRIVE_TARGET_FOLDER_ID}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
         results = service_to_use.files().list(q=query, pageSize=100, fields="nextPageToken, files(id, name)").execute()
@@ -340,14 +351,52 @@ def download_folder_contents(folder_id: str, recipe_name: str, download_base_pat
     os.makedirs(download_base_path, exist_ok=True)
 
     try:
-        from config import GDRIVE_SERVICE_CLIENT
-        service_to_use = GDRIVE_SERVICE_CLIENT
-        if not service_to_use:
-            print("WARNING: download_folder_contents called when shared GDrive client is not ready. Attempting to create one.")
-            service_to_use = create_gdrive_service()
+        import config # Import the module itself
+        service_to_use = config.GDRIVE_SERVICE_CLIENT # Access the variable via the module
+        if not service_to_use: # Check the actual module attribute
+            error_msg = "Shared GDrive client not initialized. Called from download_folder_contents."
+            print(f"ERROR: {error_msg}")
+            raise GDriveServiceError(error_msg)
 
         video_mime_types = "(" + " or ".join([f"mimeType='{m}'" for m in ['video/mp4', 'video/mpeg', 'video/quicktime', 'video/x-msvideo', 'video/x-matroska']]) + ")"
-        query = f"'{folder_id}' in parents and {video_mime_types} and trashed = false"
+        # Use service_to_use in the API call
+        results = service_to_use.files().list(q=f"'{folder_id}' in parents and {video_mime_types} and trashed = false", pageSize=50, fields="files(id, name)").execute()
+        items = results.get('files', [])
+
+        if not items:
+            msg = f"No video files found in GDrive folder ID {folder_id} ({recipe_name})."
+            update_recipe_status(recipe_id=folder_id, name=recipe_name, status="DOWNLOAD_FAILED", error_message=msg)
+            return False
+        
+        print(f"Found {len(items)} video files in GDrive folder {folder_id}. Starting download...")
+        for item in items:
+            file_id, file_name = item['id'], item['name']
+            file_path = os.path.join(download_base_path, file_name) 
+            print(f"Downloading GDrive file: {file_name} to {file_path}...")
+            # Ensure this internal call also uses service_to_use if it were to call another helper,
+            # but get_media is a direct method.
+            request_dl = service_to_use.files().get_media(fileId=file_id)
+            fh = io.BytesIO()
+            downloader = MediaIoBaseDownload(fh, request_dl)
+            done = False
+            while not done:
+                status, done = downloader.next_chunk()
+                if status: print(f"Download {file_name}: {int(status.progress() * 100)}%.")
+            with open(file_path, 'wb') as f:
+                fh.seek(0)
+                f.write(fh.read())
+            print(f"Successfully downloaded {file_name}")
+
+        relative_path_for_db = os.path.relpath(download_base_path, TEMP_PROCESSING_BASE_DIR)
+        print(f"GDrive Service: Storing relative path for raw_clips_path in DB: '{relative_path_for_db}'")
+        update_recipe_status(recipe_id=folder_id, name=recipe_name, status="DOWNLOADED", raw_clips_path=relative_path_for_db)
+        return True
+    except Exception as e:
+        # Ensure service variable is not referenced here if it might be None
+        msg = f"Error during GDrive download for {recipe_name}: {e}"
+        print(f"ERROR: {msg}")
+        update_recipe_status(recipe_id=folder_id, name=recipe_name, status="DOWNLOAD_FAILED", error_message=msg)
+        return False
         results = service.files().list(q=query, pageSize=50, fields="files(id, name)").execute()
         items = results.get('files', [])
 

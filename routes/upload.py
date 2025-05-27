@@ -97,16 +97,98 @@ def trigger_next_background_task(background_tasks: BackgroundTasks, recipe_id: s
 
     # Add more conditions if there are other auto-triggered steps
 
-# --- Routes ---
+# --- YouTube OAuth Routes ---
+
+# Store the flow object globally in this module for the callback to access
+# This is a simplification for a single-user local application.
+# In a multi-user or more robust scenario, use a session or a more secure state management.
+_youtube_oauth_flow = None
+
+@router.get("/authorize_youtube", name="authorize_youtube_route")
+async def authorize_youtube(request: Request):
+    global _youtube_oauth_flow
+    from config import CLIENT_SECRET_YOUTUBE_PATH
+    from services.youtube_uploader import SCOPES_YOUTUBE # Import from correct location
+    from google_auth_oauthlib.flow import Flow # Use Flow for web apps
+
+    if not os.path.exists(CLIENT_SECRET_YOUTUBE_PATH):
+        raise HTTPException(status_code=500, detail="YouTube client secret file not found.")
+
+    # The redirect_uri must match one of the "Authorized redirect URIs" in your Google Cloud Console
+    redirect_uri = request.url_for('oauth2callback_youtube_route')
+    
+    _youtube_oauth_flow = Flow.from_client_secrets_file(
+        CLIENT_SECRET_YOUTUBE_PATH,
+        scopes=SCOPES_YOUTUBE,
+        redirect_uri=redirect_uri
+    )
+    
+    authorization_url, state = _youtube_oauth_flow.authorization_url(
+        access_type='offline',
+        prompt='consent', # Ensures refresh token is granted
+        include_granted_scopes='true'
+    )
+    # Store state in session if available, or handle appropriately
+    # For now, we rely on the flow object being in memory (simplification for local app)
+    # request.session['youtube_oauth_state'] = state # If using Starlette sessions
+    print(f"Redirecting to YouTube for authorization: {authorization_url}")
+    return RedirectResponse(authorization_url)
+
+@router.get("/oauth2callback", name="oauth2callback_youtube_route")
+async def oauth2callback_youtube(request: Request, code: str = None, state: str = None, error: str = None):
+    global _youtube_oauth_flow
+    from config import TOKEN_YOUTUBE_OAUTH_PATH, YOUTUBE_SERVICE_CLIENT # to store client after auth
+    import config as app_config # to set YOUTUBE_SERVICE_CLIENT
+
+    if error:
+        return RedirectResponse(url=f"/select_folder?error=YouTube_OAuth_Error:_{error}")
+    if not code:
+        return RedirectResponse(url=f"/select_folder?error=YouTube_OAuth_Error:_Missing_authorization_code")
+    if not _youtube_oauth_flow:
+        return RedirectResponse(url=f"/select_folder?error=YouTube_OAuth_Error:_OAuth_flow_not_initiated_or_lost_state.")
+
+    try:
+        # For web applications, you need to ensure the state matches to prevent CSRF.
+        # This requires storing the state generated in /authorize_youtube and comparing it here.
+        # If using request.session:
+        # stored_state = request.session.pop('youtube_oauth_state', None)
+        # if not stored_state or stored_state != state:
+        #     raise HTTPException(status_code=400, detail="OAuth state mismatch. Possible CSRF attack.")
+
+        _youtube_oauth_flow.fetch_token(code=code)
+        creds = _youtube_oauth_flow.credentials
+        
+        with open(TOKEN_YOUTUBE_OAUTH_PATH, 'w') as token_file:
+            token_file.write(creds.to_json())
+        print(f"YouTube OAuth: Token fetched and saved to {TOKEN_YOUTUBE_OAUTH_PATH}")
+
+        # Optionally, create and store the service client immediately
+        app_config.YOUTUBE_SERVICE_CLIENT = youtube_uploader.create_youtube_service(redirect_uri=None) # Uses the new token
+        app_config.APP_STARTUP_STATUS["youtube_ready"] = True
+        app_config.APP_STARTUP_STATUS["youtube_error_details"] = None
+        print("YouTube OAuth: Service client re-initialized with new token and marked as ready.")
+        
+        _youtube_oauth_flow = None # Clear the flow object
+
+        return RedirectResponse(url="/select_folder?message=YouTube_authorization_successful.")
+    except Exception as e:
+        print(f"YouTube OAuth Callback Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return RedirectResponse(url=f"/select_folder?error=YouTube_OAuth_Callback_Error:_{str(e)}")
+
+# --- Original Routes ---
 
 @router.get("/select_folder", response_class=HTMLResponse, name="select_folder_route")
 async def select_folder_page(request: Request, message: str = None, error: str = None):
+    from config import APP_STARTUP_STATUS # Import the status dict
     folders_with_status = gdrive.list_folders_from_gdrive_and_db_status()
     return templates.TemplateResponse("select_folder.html", {
         "request": request, 
         "folders": folders_with_status,
         "message": message,
-        "error": error
+        "error": error,
+        "config": {"APP_STARTUP_STATUS": APP_STARTUP_STATUS}  # Pass it to the template
     })
 
 from config import TEMP_PROCESSING_BASE_DIR, RAW_DIR # Import new config vars
@@ -171,9 +253,11 @@ async def preview_video_page(request: Request, recipe_db_id: str):
     merged_video_gdrive_id = recipe_data.get("merged_video_gdrive_id")
     metadata_gdrive_id = recipe_data.get("metadata_gdrive_id")
     current_status = recipe_data.get("status")
-    
+
+    # Initialize variables that might be used in the final except block
     local_temp_video_for_preview = None
     local_temp_metadata_for_preview = None
+    local_recipe_preview_dir = None # Initialize this one
 
     # Allow preview also if successfully uploaded, to see final state/link
     if current_status not in ["READY_FOR_PREVIEW", "METADATA_GENERATED", "UPLOAD_FAILED", "UPLOADED_TO_YOUTUBE"]:
@@ -189,7 +273,10 @@ async def preview_video_page(request: Request, recipe_db_id: str):
         return templates.TemplateResponse("preview.html", {"request": request, "recipe_db_id": recipe_db_id, "recipe_name_display": recipe_name_orig, "error_message": "Metadata Google Drive ID not found in DB."})
 
     try:
-        gdrive_service = gdrive.get_gdrive_service()
+        import config as app_config # Use an alias to avoid conflict if 'config' is used locally
+        gdrive_service = app_config.GDRIVE_SERVICE_CLIENT
+        if not gdrive_service:
+            raise HTTPException(status_code=503, detail="GDrive service not available. Please try again later.")
         
         preview_temp_dir_name = f"preview_temp_{recipe_db_id}_{recipe_name_safe}" # Make more unique
         # Ensure static/preview_cache exists

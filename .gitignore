@@ -4,6 +4,7 @@ client_secret_*.json
 service_account_key.json
 token_gdrive.json
 token_youtube.json
+token_youtube_oauth.json # Added to ignore OAuth user tokens
 
 # Python specific
 *.pyc

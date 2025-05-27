@@ -15,6 +15,20 @@
         </form>
     </div>
 
+    <div style="margin-bottom: 2em; padding: 1em; border: 1px solid var(--color-info-border); background-color: var(--color-info-bg);">
+        <h3 style="color: var(--color-info-text); margin-top: 0;">YouTube Authorization</h3>
+        {% if config.APP_STARTUP_STATUS.youtube_ready %}
+            <p style="color: green;">YouTube is authorized and ready.</p>
+        {% else %}
+            <p style="color: var(--color-error-text);">YouTube requires authorization to upload videos.</p>
+            <p><a href="{{ url_for('authorize_youtube_route') }}" class="button">Authorize YouTube Account</a></p>
+            {% if config.APP_STARTUP_STATUS.youtube_error_details %}
+                <p style="font-size: 0.8em; color: var(--color-text-secondary);">Details: {{ config.APP_STARTUP_STATUS.youtube_error_details }}</p>
+            {% endif %}
+        {% endif %}
+    </div>
+
+
     {% if request.query_params.get("message") %}
         <div class="message">
             {{ request.query_params.get("message").replace("_", " ") }}

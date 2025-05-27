@@ -38,15 +38,25 @@ async def startup_event():
     # Initialize YouTube Service
     print("MAIN: Initializing YouTube Service...")
     try:
-        youtube_client_instance = youtube_uploader.create_youtube_service()
+        # For OAuth user consent, actual client creation might be deferred until user authorizes.
+        # The create_youtube_service might raise YouTubeNeedsAuthorization if token doesn't exist.
+        # We can't complete the flow during app startup without user interaction.
+        # So, we check if a token already exists and is valid.
+        # The redirect_uri for startup will be None, so it relies on existing token.
+        youtube_client_instance = youtube_uploader.create_youtube_service(redirect_uri=None) 
         if youtube_uploader.check_youtube_service(youtube_client_instance):
-            import config # Import to assign to config's global variable
-            config.YOUTUBE_SERVICE_CLIENT = youtube_client_instance # Explicitly store it
+            import config 
+            config.YOUTUBE_SERVICE_CLIENT = youtube_client_instance 
             APP_STARTUP_STATUS["youtube_ready"] = True
-            print("MAIN: YouTube Service initialized, checked, and set as shared client.")
+            print("MAIN: YouTube Service successfully initialized from existing token and checked.")
         else:
+            # check_youtube_service would have set youtube_error_details
             APP_STARTUP_STATUS["youtube_ready"] = False
-            print(f"MAIN: ERROR - YouTube Service initialization or check failed. Details: {APP_STARTUP_STATUS['youtube_error_details']}")
+            print(f"MAIN: ERROR - YouTube Service check failed with existing token. Details: {APP_STARTUP_STATUS['youtube_error_details']}")
+    except youtube_uploader.YouTubeNeedsAuthorization as e:
+        APP_STARTUP_STATUS["youtube_ready"] = False
+        APP_STARTUP_STATUS["youtube_error_details"] = f"User authorization required: {e.authorization_url}"
+        print(f"MAIN: YouTube Service needs user authorization. Visit the URL manually or via UI button if app is running.")
     except Exception as e:
         APP_STARTUP_STATUS["youtube_ready"] = False
         APP_STARTUP_STATUS["youtube_error_details"] = str(e)
@@ -77,7 +87,21 @@ async def startup_event():
         print("MAIN: WARNING - One or more services are not ready. Check error details.")
         print(f"MAIN: Startup Status: {APP_STARTUP_STATUS}")
 
-# Mount the upload router
+# --- OAuth2 Callback Route for YouTube ---
+# This needs to be added to a router, e.g., a new auth_router or existing upload.router
+# For now, let's define it here and assume it will be added to a router.
+# This is a simplified callback, real world might need more robust state handling.
+
+# This state variable is a simplified way to pass the flow's state to the callback.
+# In a real app, use a session or a more secure temporary store.
+# For now, we can't easily share state between create_youtube_service and the callback route if they are in different modules
+# without passing it through a global or similar mechanism. The InstalledAppFlow.fetch_token is blocking.
+# The InstalledAppFlow is more suited for CLI apps. For web apps, google_auth_oauthlib.flow.Flow is better.
+# The create_youtube_service has been adapted to raise YouTubeNeedsAuthorization which contains the auth_url.
+# The actual token fetching will now happen in a dedicated auth route.
+
+
+# Mount the upload router (which should contain the YouTube auth routes now)
 app.include_router(upload.router)
 
 from templating import templates # Import templates

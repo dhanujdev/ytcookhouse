@@ -129,3 +129,15 @@ APP_STARTUP_STATUS = {
 CACHED_DB_CONTENT = None
 DB_CACHE_TIMESTAMP = None 
 DB_CACHE_DURATION_SECONDS = 15 # Cache DB content for 15 seconds by default
+
+# --- YouTube OAuth User Consent Configuration ---
+# Path to the client secret file downloaded from Google Cloud Console for YouTube API (OAuth Web App)
+CLIENT_SECRET_YOUTUBE_PATH = os.path.join(APP_ROOT_DIR, "client_secret_youtube.json")
+# Path to store the user's OAuth token after they grant consent
+TOKEN_YOUTUBE_OAUTH_PATH = os.path.join(APP_ROOT_DIR, "token_youtube_oauth.json") 
+# Note: The old OAUTH_TOKEN_YOUTUBE_PATH in youtube_uploader.py might be for a different flow or can be removed/renamed.
+
+# --- General Auth Method Selection ---
+# GOOGLE_AUTH_METHOD still applies to GDrive and Gemini (Service Account)
+# We can add a specific one for YouTube if needed, or let youtube_uploader.py decide based on file presence.
+YOUTUBE_AUTH_METHOD = "OAUTH_USER_CONSENT" # Explicitly set this for clarity
