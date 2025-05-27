@@ -134,7 +134,7 @@ def upload_video_to_youtube(metadata: dict,
             )
             print(f"BACKGROUND TASK: YouTube: Final DB status for {recipe_db_id_for_status_update} to '{current_db_status_on_exit}'. URL: {youtube_url_on_success if youtube_url_on_success else 'N/A'}, Err: {error_message_on_exit if error_message_on_exit else 'None'}")
 
-        if local_temp_video__path and os.path.exists(local_temp_video_path):
+        if local_temp_video_path and os.path.exists(local_temp_video_path):
             try:
                 os.remove(local_temp_video_path)
                 print(f"BACKGROUND TASK: YouTube: Cleaned local temp video: {local_temp_video_path}")

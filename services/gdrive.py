@@ -23,7 +23,8 @@ from config import (
 )
 
 # --- Google Drive API Setup ---
-SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
+# Changed to read/write scope for creating folders and uploading files
+SCOPES = ['https://www.googleapis.com/auth/drive'] 
 # OAUTH_TOKEN_GDRIVE_PATH is no longer used as OAuth is removed from this service
 # OAUTH_TOKEN_GDRIVE_PATH = os.path.join(os.path.dirname(__file__), '..', 'token_gdrive.json')
 
@@ -70,6 +71,186 @@ def get_gdrive_service():
 # remains largely the same as it calls get_gdrive_service() and doesn't need to change its own logic.
 # Ensure the __main__ block doesn't try to re-define config paths if it uses them directly.
 
+# --- GDrive Helper Functions for App Data Management ---
+
+def find_file_id_by_name(parent_folder_id: str, filename: str, service=None):
+    """Finds a file by name within a specific parent folder."""
+    if not service:
+        service = get_gdrive_service()
+    try:
+        query = f"name = '{filename}' and '{parent_folder_id}' in parents and trashed = false"
+        response = service.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
+        for file in response.get('files', []):
+            return file.get('id')
+    except HttpError as error:
+        print(f"An error occurred while trying to find file '{filename}': {error}")
+    return None
+
+def get_or_create_app_data_folder_id(service=None):
+    """Gets or creates the main application data folder in GDrive.
+       Uses GOOGLE_DRIVE_APP_DATA_FOLDER_NAME from config.
+    """
+    if not service:
+        service = get_gdrive_service()
+    
+    from config import GOOGLE_DRIVE_APP_DATA_FOLDER_NAME # Ensure it's imported here for direct use
+    if not GOOGLE_DRIVE_APP_DATA_FOLDER_NAME:
+        raise GDriveServiceError("GOOGLE_DRIVE_APP_DATA_FOLDER_NAME is not set in config.")
+
+    # Check if folder already exists (look in root of My Drive)
+    query = f"name='{GOOGLE_DRIVE_APP_DATA_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and 'root' in parents and trashed=false"
+    try:
+        response = service.files().list(q=query, spaces='drive', fields='files(id)').execute()
+        folders = response.get('files', [])
+        if folders:
+            folder_id = folders[0].get('id')
+            print(f"GDrive: Found existing App Data folder '{GOOGLE_DRIVE_APP_DATA_FOLDER_NAME}' with ID: {folder_id}")
+            return folder_id
+        else:
+            # Create the folder in the root of My Drive
+            print(f"GDrive: App Data folder '{GOOGLE_DRIVE_APP_DATA_FOLDER_NAME}' not found. Creating...")
+            file_metadata = {
+                'name': GOOGLE_DRIVE_APP_DATA_FOLDER_NAME,
+                'mimeType': 'application/vnd.google-apps.folder'
+            }
+            folder = service.files().create(body=file_metadata, fields='id').execute()
+            folder_id = folder.get('id')
+            print(f"GDrive: Created App Data folder '{GOOGLE_DRIVE_APP_DATA_FOLDER_NAME}' with ID: {folder_id}")
+            return folder_id
+    except HttpError as error:
+        print(f"GDrive: An error occurred during get/create app data folder: {error}")
+        raise GDriveServiceError(f"Failed to get/create App Data folder '{GOOGLE_DRIVE_APP_DATA_FOLDER_NAME}': {error}")
+    except Exception as e:
+        print(f"GDrive: An unexpected error in get_or_create_app_data_folder_id: {e}")
+        raise GDriveServiceError(f"Unexpected error in get_or_create_app_data_folder_id for '{GOOGLE_DRIVE_APP_DATA_FOLDER_NAME}': {e}")
+
+
+def upload_file_to_drive(local_file_path: str, drive_folder_id: str, drive_filename: str, mimetype: str = 'application/octet-stream', existing_file_id: str = None, service=None):
+    """Uploads a local file to a specified Google Drive folder.
+       Updates the file if existing_file_id is provided.
+    """
+    if not service:
+        service = get_gdrive_service()
+    try:
+        file_metadata = {'name': drive_filename}
+        if not existing_file_id: # Only add parents if creating new file
+             file_metadata['parents'] = [drive_folder_id]
+
+        media = MediaFileUpload(local_file_path, mimetype=mimetype, resumable=True)
+        
+        if existing_file_id:
+            print(f"GDrive: Updating existing file ID {existing_file_id} with {local_file_path} as {drive_filename}")
+            request = service.files().update(fileId=existing_file_id, body=file_metadata, media_body=media, fields='id')
+        else:
+            print(f"GDrive: Uploading new file {local_file_path} to folder {drive_folder_id} as {drive_filename}")
+            request = service.files().create(body=file_metadata, media_body=media, fields='id')
+        
+        file = request.execute()
+        uploaded_file_id = file.get('id')
+        print(f"GDrive: File '{drive_filename}' uploaded successfully. File ID: {uploaded_file_id}")
+        return uploaded_file_id
+    except HttpError as error:
+        print(f"GDrive: An error occurred during file upload: {error}")
+        # Consider specific error handling, e.g., for 404 if folder_id is wrong
+        raise GDriveServiceError(f"Failed to upload file '{drive_filename}': {error}")
+    except Exception as e:
+        print(f"GDrive: An unexpected error occurred during file upload: {e}")
+        raise GDriveServiceError(f"Unexpected error uploading file '{drive_filename}': {e}")
+
+def get_file_content_from_drive(file_id: str, service=None) -> str | None:
+    """Downloads a file's content from Google Drive as a string."""
+    if not service:
+        service = get_gdrive_service()
+    try:
+        request = service.files().get_media(fileId=file_id)
+        fh = io.BytesIO()
+        downloader = MediaIoBaseDownload(fh, request)
+        done = False
+        while not done:
+            status, done = downloader.next_chunk()
+            # print(f"GDrive Download: {int(status.progress() * 100)}%.") # Optional progress
+        fh.seek(0)
+        return fh.read().decode('utf-8') # Assuming text content like JSON
+    except HttpError as error:
+        if error.resp.status == 404:
+            print(f"GDrive: File with ID {file_id} not found for download.")
+            return None # File not found is a valid case for db loading
+        print(f"GDrive: An HttpError occurred downloading file ID {file_id}: {error}")
+        raise GDriveServiceError(f"Failed to download file content for ID '{file_id}': {error}")
+    except Exception as e:
+        print(f"GDrive: An unexpected error occurred downloading file ID {file_id}: {e}")
+        raise GDriveServiceError(f"Unexpected error downloading file content for ID '{file_id}': {e}")
+
+def get_or_create_recipe_subfolder_id(app_data_folder_id: str, recipe_id: str, subfolder_name: str, service=None):
+    """Gets or creates a specific subfolder (e.g., for merged videos, metadata) for a recipe
+       within the main app_data_folder_id, using recipe_id as part of the folder name
+       to ensure uniqueness if multiple recipes share a name.
+       Example subfolder_name could be 'merged_videos', 'metadata_files'.
+       The actual folder created will be like 'recipe_id_subfolder_name'.
+    """
+    if not service:
+        service = get_gdrive_service()
+
+    # Sanitize recipe_id and subfolder_name to be safe for folder names if necessary,
+    # though GDrive IDs are usually safe. Using a combination for clarity.
+    gd_subfolder_name = f"{recipe_id}_{subfolder_name}"
+
+    query = f"name='{gd_subfolder_name}' and mimeType='application/vnd.google-apps.folder' and '{app_data_folder_id}' in parents and trashed=false"
+    try:
+        response = service.files().list(q=query, spaces='drive', fields='files(id)').execute()
+        folders = response.get('files', [])
+        if folders:
+            return folders[0].get('id')
+        else:
+            file_metadata = {
+                'name': gd_subfolder_name,
+                'mimeType': 'application/vnd.google-apps.folder',
+                'parents': [app_data_folder_id]
+            }
+            folder = service.files().create(body=file_metadata, fields='id').execute()
+            return folder.get('id')
+    except HttpError as error:
+        print(f"GDrive: An error occurred during get/create recipe subfolder '{gd_subfolder_name}': {error}")
+        raise GDriveServiceError(f"Failed to get/create recipe subfolder '{gd_subfolder_name}': {error}")
+
+
+def download_file_from_drive(file_id: str, local_download_path: str, service=None) -> bool:
+    """Downloads a file from GDrive to the specified local_download_path."""
+    if not service:
+        service = get_gdrive_service()
+    try:
+        request = service.files().get_media(fileId=file_id)
+        fh = io.BytesIO()
+        downloader = MediaIoBaseDownload(fh, request)
+        done = False
+        print(f"GDrive: Starting download of file ID {file_id} to {local_download_path}...")
+        while not done:
+            status, done = downloader.next_chunk()
+            if status:
+                print(f"GDrive Download progress: {int(status.progress() * 100)}%.")
+        
+        # Ensure directory for local_download_path exists
+        local_dir = os.path.dirname(local_download_path)
+        if not os.path.exists(local_dir):
+            os.makedirs(local_dir)
+            
+        with open(local_download_path, 'wb') as f:
+            fh.seek(0)
+            f.write(fh.read())
+        print(f"GDrive: Successfully downloaded file ID {file_id} to {local_download_path}")
+        return True
+    except HttpError as error:
+        print(f"GDrive: An HttpError occurred downloading file ID {file_id} to {local_download_path}: {error}")
+        # Optionally, clean up partially downloaded file if any
+        if os.path.exists(local_download_path):
+            # os.remove(local_download_path) # Or handle differently
+            pass
+        raise GDriveServiceError(f"Failed to download file from drive (ID: {file_id}): {error}")
+    except Exception as e:
+        print(f"GDrive: An unexpected error occurred downloading file ID {file_id} to {local_download_path}: {e}")
+        raise GDriveServiceError(f"Unexpected error downloading file from drive (ID: {file_id}): {e}")
+
+# --- Main GDrive Service Functions ---
 
 def list_folders_from_gdrive_and_db_status():
     """
@@ -153,8 +334,13 @@ def download_folder_contents(folder_id: str, recipe_name: str, download_base_pat
         update_recipe_status(recipe_id=folder_id, name=recipe_name, status="download_failed", error_message=msg); return False
 
 if __name__ == '__main__':
-    print("Testing GDrive Service Module (Service Account with Individual Fields method)...")
+    print("Testing GDrive Service Module (Service Account with Individual Fields method)...") # __main__ block
     print(f"Configured Google Auth Method from config.py: {GOOGLE_AUTH_METHOD}")
+    # The following test code is illustrative and may need GOOGLE_DRIVE_APP_DATA_FOLDER_NAME
+    # and DB_JSON_FILENAME_ON_DRIVE from config to be imported if used directly here.
+    # It's better if such test code uses the functions it's testing.
+    from config import GOOGLE_DRIVE_APP_DATA_FOLDER_NAME, DB_JSON_FILENAME_ON_DRIVE # For test
+    
     if GOOGLE_AUTH_METHOD == "SERVICE_ACCOUNT_INDIVIDUAL_FIELDS":
         print("Attempting to use Service Account credentials constructed from individual .env variables.")
     else:
@@ -164,7 +350,9 @@ if __name__ == '__main__':
     APP_DATA_FOLDER_ID_TEST = None # To be set after creating/getting it
     try:
         # Test: Get or create app data folder
-        app_data_folder_id_test = get_or_create_app_data_folder_id() # Assuming this might call get_gdrive_service if not passed
+        # These test functions (get_or_create_app_data_folder_id etc.) are now defined globally in the module
+        test_service = get_gdrive_service() # Get service once for tests
+        app_data_folder_id_test = get_or_create_app_data_folder_id(service=test_service)
         if not app_data_folder_id_test:
             print("CRITICAL TEST ERROR: Could not get or create App Data Folder in GDrive. Aborting further GDrive tests.")
             sys.exit(1) # Use sys.exit(1) to indicate an error exit
@@ -177,27 +365,30 @@ if __name__ == '__main__':
         db_gdrive_filename_test = "test_app_database.json"
         
         # Try to find it first
-        existing_db_file_id = find_file_id_by_name(APP_DATA_FOLDER_ID_TEST, db_gdrive_filename_test)
-        print(f"Test: Existing DB file ID on GDrive: {existing_db_file_id}")
+        existing_db_file_id = find_file_id_by_name(app_data_folder_id_test, DB_JSON_FILENAME_ON_DRIVE, service=test_service)
+        print(f"Test: Existing DB file ID on GDrive for '{DB_JSON_FILENAME_ON_DRIVE}': {existing_db_file_id}")
 
         # Create a dummy local db.json to upload
-        dummy_local_db_path = os.path.join(os.path.dirname(__file__), "..", "videos", "temp_test_db.json") # Use a temp location
+        # Ensure BASE_DIR is accessible or use relative paths carefully for tests
+        from config import BASE_DIR # For test path construction
+        dummy_local_db_path = os.path.join(BASE_DIR, "temp_test_db.json")
         if not os.path.exists(os.path.dirname(dummy_local_db_path)):
              os.makedirs(os.path.dirname(dummy_local_db_path))
         with open(dummy_local_db_path, 'w') as f_db_test:
             json.dump(db_test_content, f_db_test)
 
         uploaded_db_file_id = upload_file_to_drive(
-            local_file_path=dummy_local_db_path, 
-            drive_folder_id=APP_DATA_FOLDER_ID_TEST, 
-            drive_filename=db_gdrive_filename_test,
+            local_file_path=dummy_local_db_path,
+            drive_folder_id=app_data_folder_id_test,
+            drive_filename=DB_JSON_FILENAME_ON_DRIVE, # Use constant from config
             mimetype='application/json',
-            existing_file_id=existing_db_file_id
+            existing_file_id=existing_db_file_id,
+            service=test_service
         )
         if uploaded_db_file_id:
-            print(f"Test: Successfully uploaded/updated {db_gdrive_filename_test} to GDrive. File ID: {uploaded_db_file_id}")
+            print(f"Test: Successfully uploaded/updated {DB_JSON_FILENAME_ON_DRIVE} to GDrive. File ID: {uploaded_db_file_id}")
             # Test download and verify content
-            downloaded_db_content_str = get_file_content_from_drive(uploaded_db_file_id)
+            downloaded_db_content_str = get_file_content_from_drive(uploaded_db_file_id, service=test_service)
             if downloaded_db_content_str:
                 downloaded_db_json = json.loads(downloaded_db_content_str)
                 if downloaded_db_json.get("test_key") == "test_value_initial":
@@ -207,11 +398,11 @@ if __name__ == '__main__':
             else:
                 print("Test: Failed to download DB content for verification.")
         else:
-            print(f"Test: Failed to upload/update {db_gdrive_filename_test} to GDrive.")
+            print(f"Test: Failed to upload/update {DB_JSON_FILENAME_ON_DRIVE} to GDrive.")
         
         if os.path.exists(dummy_local_db_path): os.remove(dummy_local_db_path)
 
-        folders = list_folders_from_gdrive_and_db_status() # This will now use the GDrive based db.json indirectly via utils
+        folders = list_folders_from_gdrive_and_db_status() # This uses the main get_gdrive_service()
         if folders:
             print(f"Successfully listed {len(folders)} folders.")
             # Simplified download test: try to download the first 'New' folder if any
@@ -239,8 +430,13 @@ if __name__ == '__main__':
             print(f"Download test for '{folder_to_download['name']}' to local temp dir {'SUCCESSFUL' if download_success else 'FAILED'}.")
             
             # Test creating a recipe subfolder on GDrive for outputs
-            if APP_DATA_FOLDER_ID_TEST:
-                recipe_gdrive_output_folder_id = get_or_create_recipe_subfolder_id(APP_DATA_FOLDER_ID_TEST, folder_to_download['id'], "test_outputs")
+            if app_data_folder_id_test: # Use the id obtained in this test
+                recipe_gdrive_output_folder_id = get_or_create_recipe_subfolder_id(
+                    app_data_folder_id_test, 
+                    folder_to_download['id'], 
+                    "test_outputs", 
+                    service=test_service
+                )
                 if recipe_gdrive_output_folder_id:
                     print(f"Test: Successfully created/got GDrive subfolder for recipe outputs: {recipe_gdrive_output_folder_id}")
                 else:
