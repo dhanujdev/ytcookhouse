@@ -63,8 +63,23 @@ OUTPUT_DIR = os.path.join(TEMP_PROCESSING_DIR, "metadata_temp")      # For metad
 STATIC_DIR_CONFIG = os.path.join(BASE_DIR, "static")
 STATIC_AUDIO_DIR = os.path.join(STATIC_DIR_CONFIG, "audio")
 
-# Ensure these local temporary directories exist
-for dir_path in [TEMP_PROCESSING_DIR, RAW_DIR, MERGED_DIR, OUTPUT_DIR, STATIC_DIR_CONFIG, STATIC_AUDIO_DIR]:
+# --- Persistent Video Storage Directories (referenced by main.py for StaticFiles) ---
+# These are gitignored locally but need to exist on the server if app expects them.
+APP_VIDEOS_DIR = os.path.join(BASE_DIR, "videos")
+APP_VIDEOS_RAW_DIR = os.path.join(APP_VIDEOS_DIR, "raw")
+APP_VIDEOS_MERGED_DIR = os.path.join(APP_VIDEOS_DIR, "merged")
+APP_VIDEOS_OUTPUT_DIR = os.path.join(APP_VIDEOS_DIR, "output")
+
+# Ensure all necessary directories exist (both temp and main video structure)
+# Note: main.py also creates APP_VIDEOS_DIR, this is just to be sure and for subdirs.
+# Order matters if creating nested dirs, ensure parent is created first.
+DIRECTORIES_TO_CREATE = [
+    TEMP_PROCESSING_DIR, RAW_DIR, MERGED_DIR, OUTPUT_DIR, # Temporary processing space
+    STATIC_DIR_CONFIG, STATIC_AUDIO_DIR, # Static assets
+    APP_VIDEOS_DIR, APP_VIDEOS_RAW_DIR, APP_VIDEOS_MERGED_DIR, APP_VIDEOS_OUTPUT_DIR # Main video storage structure
+]
+
+for dir_path in DIRECTORIES_TO_CREATE:
     if not os.path.exists(dir_path):
         try:
             os.makedirs(dir_path)

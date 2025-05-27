@@ -25,7 +25,8 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 # IMPORTANT: This makes your 'videos' directory publicly accessible if the server is exposed.
 # For production, consider a more secure way to serve or stream private videos.
 VIDEO_FILES_DIR = os.path.join(os.path.dirname(__file__), 'videos') # Assuming 'videos' is at the root of barged_api
-# Video directories are now created in config.py
+if not os.path.exists(VIDEO_FILES_DIR):
+    os.makedirs(VIDEO_FILES_DIR) # Ensure videos directory exists
 app.mount("/videos_serve", StaticFiles(directory=VIDEO_FILES_DIR), name="videos_serve")
 
 
