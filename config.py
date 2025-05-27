@@ -1,17 +1,19 @@
+
 import os
 import json 
 from dotenv import load_dotenv
+import platform # Import platform module
 
-BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-load_dotenv(os.path.join(BASE_DIR, '.env'))
+# Determine the true base directory of the application (barged_api folder)
+# __file__ is the path to config.py, so its dirname is barged_api
+APP_ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(os.path.join(APP_ROOT_DIR, '.env')) # Load .env from barged_api directory
 
 # --- Google API Credentials Configuration ---
-# This configuration ONLY uses individual Service Account fields from environment variables.
-
 SA_TYPE = os.getenv("SA_TYPE", "service_account")
 SA_PROJECT_ID = os.getenv("SA_PROJECT_ID")
 SA_PRIVATE_KEY_ID = os.getenv("SA_PRIVATE_KEY_ID")
-SA_PRIVATE_KEY = os.getenv("SA_PRIVATE_KEY") # Must contain literal \n for newlines in .env
+SA_PRIVATE_KEY = os.getenv("SA_PRIVATE_KEY") # Must contain literal \\n for newlines in .env
 SA_CLIENT_EMAIL = os.getenv("SA_CLIENT_EMAIL")
 SA_CLIENT_ID = os.getenv("SA_CLIENT_ID")
 SA_AUTH_URI = os.getenv("SA_AUTH_URI", "https://accounts.google.com/o/oauth2/auth")
@@ -21,14 +23,13 @@ SA_CLIENT_X509_CERT_URL = os.getenv("SA_CLIENT_X509_CERT_URL")
 
 GOOGLE_AUTH_METHOD = None
 GOOGLE_SERVICE_ACCOUNT_INFO = None
-# GOOGLE_SERVICE_ACCOUNT_FILE_PATH and GOOGLE_CLIENT_SECRET_PATH_CONFIG are no longer used.
 
 if SA_PROJECT_ID and SA_PRIVATE_KEY_ID and SA_PRIVATE_KEY and SA_CLIENT_EMAIL and SA_CLIENT_ID and SA_CLIENT_X509_CERT_URL:
     GOOGLE_SERVICE_ACCOUNT_INFO = {
         "type": SA_TYPE,
         "project_id": SA_PROJECT_ID,
         "private_key_id": SA_PRIVATE_KEY_ID,
-        "private_key": SA_PRIVATE_KEY.replace('\\n', '\n') if SA_PRIVATE_KEY else None,
+        "private_key": SA_PRIVATE_KEY.replace('\\\\n', '\n') if SA_PRIVATE_KEY else None, # Adjusted escaping for \n
         "client_email": SA_CLIENT_EMAIL,
         "client_id": SA_CLIENT_ID,
         "auth_uri": SA_AUTH_URI,
@@ -39,59 +40,71 @@ if SA_PROJECT_ID and SA_PRIVATE_KEY_ID and SA_PRIVATE_KEY and SA_CLIENT_EMAIL an
     GOOGLE_AUTH_METHOD = "SERVICE_ACCOUNT_INDIVIDUAL_FIELDS"
 else:
     print("ERROR CONFIG: Insufficient Google Service Account details in .env. Please set all SA_... variables.")
-    # You might want to raise an exception here or handle this more gracefully depending on your app's needs.
-    # For example: raise ValueError("Missing one or more SA_... environment variables for Google authentication.")
 
 # --- Google Drive Specific Configuration ---
-GDRIVE_TARGET_FOLDER_ID = os.getenv("GDRIVE_TARGET_FOLDER_ID", "...") # Source folder for raw recipe clips
-GOOGLE_DRIVE_APP_DATA_FOLDER_NAME = os.getenv("GOOGLE_DRIVE_APP_DATA_FOLDER_NAME", "YTCookhouseAppData") # App's root data folder on GDrive
-DB_JSON_FILENAME_ON_DRIVE = "app_database.json" # Name of the DB file on GDrive
+GDRIVE_TARGET_FOLDER_ID = os.getenv("GDRIVE_TARGET_FOLDER_ID", "...") 
+GOOGLE_DRIVE_APP_DATA_FOLDER_NAME = os.getenv("GOOGLE_DRIVE_APP_DATA_FOLDER_NAME", "YTCookhouseAppData")
+DB_JSON_FILENAME_ON_DRIVE = "app_database.json" 
 
 # --- Gemini API Key ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "...")
 
-# --- Local Ephemeral Directories for Temporary Processing on Render ---
-# These are temporary working directories on Render's filesystem.
-# Data here will NOT persist across deploys/restarts if not backed by a persistent disk (which we are avoiding for cost).
-# Google Drive will be the source of truth for persistent data.
+# --- Environment-Aware Base Directory for Temporary Processing ---
+# This is the root for raw_clips_temp, merged_videos_temp, metadata_temp
+# These files are considered ephemeral locally and should be uploaded to GDrive for persistence.
+if 'RENDER' in os.environ and os.environ.get('RENDER_INSTANCE_ID'):
+    # Running on Render. Check if a persistent disk is mounted at /mnt/data
+    render_disk_path = "/mnt/data/ytauto_processing_space"
+    if os.path.exists("/mnt/data"):
+        TEMP_PROCESSING_BASE_DIR = render_disk_path
+        print(f"CONFIG - Running on Render with persistent disk. Temp Processing Base: {TEMP_PROCESSING_BASE_DIR}")
+    else:
+        # Fallback to ephemeral storage on Render if no persistent disk detected at /mnt/data
+        TEMP_PROCESSING_BASE_DIR = os.path.join(APP_ROOT_DIR, "temp_processing_space")
+        print(f"CONFIG - Running on Render (ephemeral storage). Temp Processing Base: {TEMP_PROCESSING_BASE_DIR}")
+elif platform.system() == "Windows":
+    # Local Windows environment
+    TEMP_PROCESSING_BASE_DIR = os.path.join(APP_ROOT_DIR, "temp_processing_space")
+    print(f"CONFIG - Running on Windows. Temp Processing Base: {TEMP_PROCESSING_BASE_DIR}")
+else:
+    # Other local environments (Linux, macOS)
+    TEMP_PROCESSING_BASE_DIR = os.path.join(APP_ROOT_DIR, "temp_processing_space")
+    print(f"CONFIG - Running on local {platform.system()}. Temp Processing Base: {TEMP_PROCESSING_BASE_DIR}")
 
-TEMP_PROCESSING_DIR = os.path.join(BASE_DIR, "temp_processing_space")
-RAW_DIR = os.path.join(TEMP_PROCESSING_DIR, "raw_clips_temp")       # For raw clips downloaded from GDrive
-MERGED_DIR = os.path.join(TEMP_PROCESSING_DIR, "merged_videos_temp") # For merged videos before GDrive upload
-OUTPUT_DIR = os.path.join(TEMP_PROCESSING_DIR, "metadata_temp")      # For metadata JSONs before GDrive upload
+# Define specific temporary directories relative to the dynamic base
+RAW_DIR = os.path.join(TEMP_PROCESSING_BASE_DIR, "raw_clips_temp")
+MERGED_DIR = os.path.join(TEMP_PROCESSING_BASE_DIR, "merged_videos_temp")
+METADATA_TEMP_DIR = os.path.join(TEMP_PROCESSING_BASE_DIR, "metadata_temp")
 
-STATIC_DIR_CONFIG = os.path.join(BASE_DIR, "static")
+# --- Static and Persistent Video Storage Directories (within the app structure) ---
+# These are assumed to be part of your project repo or managed by where the app is run.
+STATIC_DIR_CONFIG = os.path.join(APP_ROOT_DIR, "static")
 STATIC_AUDIO_DIR = os.path.join(STATIC_DIR_CONFIG, "audio")
 
-# --- Persistent Video Storage Directories (referenced by main.py for StaticFiles) ---
-# These are gitignored locally but need to exist on the server if app expects them.
-APP_VIDEOS_DIR = os.path.join(BASE_DIR, "videos")
-APP_VIDEOS_RAW_DIR = os.path.join(APP_VIDEOS_DIR, "raw")
-APP_VIDEOS_MERGED_DIR = os.path.join(APP_VIDEOS_DIR, "merged")
-APP_VIDEOS_OUTPUT_DIR = os.path.join(APP_VIDEOS_DIR, "output")
+# Base directory for 'videos' folder which might be served or linked directly
+# If these are also meant to be temporary before GDrive upload, they could use TEMP_PROCESSING_BASE_DIR.
+# If they are for a different purpose (e.g., local final output not necessarily uploaded or if GDrive is just a backup),
+# keeping them separate based on APP_ROOT_DIR is fine.
+APP_VIDEOS_DIR = os.path.join(APP_ROOT_DIR, "videos")
+APP_VIDEOS_RAW_DIR = os.path.join(APP_VIDEOS_DIR, "raw")             # Potentially GDrive download target if not using TEMP_PROCESSING_BASE_DIR for it
+APP_VIDEOS_MERGED_DIR = os.path.join(APP_VIDEOS_DIR, "merged")       # Potentially local merged video storage
+APP_VIDEOS_OUTPUT_DIR = os.path.join(APP_VIDEOS_DIR, "output")       # Potentially local metadata storage
 
-# Ensure all necessary directories exist (both temp and main video structure)
-# Note: main.py also creates APP_VIDEOS_DIR, this is just to be sure and for subdirs.
-# Order matters if creating nested dirs, ensure parent is created first.
 DIRECTORIES_TO_CREATE = [
-    TEMP_PROCESSING_DIR, RAW_DIR, MERGED_DIR, OUTPUT_DIR, # Temporary processing space
-    STATIC_DIR_CONFIG, STATIC_AUDIO_DIR, # Static assets
-    APP_VIDEOS_DIR, APP_VIDEOS_RAW_DIR, APP_VIDEOS_MERGED_DIR, APP_VIDEOS_OUTPUT_DIR # Main video storage structure
+    TEMP_PROCESSING_BASE_DIR, RAW_DIR, MERGED_DIR, METADATA_TEMP_DIR,
+    STATIC_DIR_CONFIG, STATIC_AUDIO_DIR,
+    APP_VIDEOS_DIR, APP_VIDEOS_RAW_DIR, APP_VIDEOS_MERGED_DIR, APP_VIDEOS_OUTPUT_DIR
 ]
 
 for dir_path in DIRECTORIES_TO_CREATE:
-    if not os.path.exists(dir_path):
-        try:
-            os.makedirs(dir_path)
-            print(f"CONFIG: Created local temporary directory: {dir_path}")
-        except OSError as e:
-            print(f"CONFIG: ERROR creating local temporary directory {dir_path}: {e}")
-
-# DB_FILE_PATH is no longer defined here as db.json is managed via Google Drive by utils.py
+    os.makedirs(dir_path, exist_ok=True) # exist_ok=True makes it safe to call multiple times
 
 # --- Verification Prints ---
-print(f"CONFIG - Base Directory (app root): {BASE_DIR}")
-print(f"CONFIG - Local Temp Processing Dir: {TEMP_PROCESSING_DIR}")
+print(f"CONFIG - APP_ROOT_DIR (location of this config file): {APP_ROOT_DIR}")
+print(f"CONFIG - TEMP_PROCESSING_BASE_DIR (dynamic for temp files): {TEMP_PROCESSING_BASE_DIR}")
+print(f"CONFIG - RAW_DIR (for downloaded raw clips): {RAW_DIR}")
+print(f"CONFIG - MERGED_DIR (for temporary merged videos): {MERGED_DIR}")
+print(f"CONFIG - METADATA_TEMP_DIR (for temporary metadata JSONs): {METADATA_TEMP_DIR}")
 print(f"CONFIG - Selected Google Auth Method: {GOOGLE_AUTH_METHOD}")
 print(f"CONFIG - GDrive Target Folder ID (Raw Clips Source): {GDRIVE_TARGET_FOLDER_ID}")
 print(f"CONFIG - GDrive App Data Folder Name (for DB, Merged, Metadata): {GOOGLE_DRIVE_APP_DATA_FOLDER_NAME}")

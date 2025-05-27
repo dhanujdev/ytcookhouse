@@ -30,31 +30,65 @@ def trigger_next_background_task(background_tasks: BackgroundTasks, recipe_id: s
 
     current_status = recipe_data.get("status")
     recipe_name_orig = recipe_data.get("name", "Unknown Recipe")
-    print(f"BACKGROUND_TRIGGER: Current status for {recipe_id} ({recipe_name_orig}) is {current_status}")
+    # More precise debug for status check
+    print(f"BACKGROUND_TRIGGER: For Recipe ID '{recipe_id}' ('{recipe_name_orig}'), status from DB is '{current_status}'. Type: {type(current_status)}")
+    
+    normalized_status = str(current_status).strip().upper()
 
-    if current_status == "DOWNLOADED":
-        clips_path = recipe_data.get("raw_clips_path")
-        if clips_path and os.path.exists(clips_path):
-            print(f"BACKGROUND_TRIGGER: Triggering MERGING for {recipe_id} from {clips_path}")
-            update_recipe_status(recipe_id=recipe_id, name=recipe_name_orig, status="MERGING")
-            background_tasks.add_task(video_editor.merge_videos_and_replace_audio, clips_path, recipe_id, recipe_name_orig)
+    if normalized_status == "DOWNLOADED" or normalized_status == "MERGE_FAILED": # Retry merge if it previously failed
+        if normalized_status == "MERGE_FAILED":
+            print(f"BACKGROUND_TRIGGER: Retrying MERGE for '{recipe_id}' which previously failed.")
         else:
-            err_msg = f"Clips path {clips_path} not found for MERGING."
-            print(f"BACKGROUND_TRIGGER: ERROR for {recipe_id} - {err_msg}")
+            print(f"BACKGROUND_TRIGGER: Condition normalized_status == 'DOWNLOADED' met for '{recipe_id}'.")
+        
+        relative_clips_path_from_db = recipe_data.get("raw_clips_path")
+        print(f"BACKGROUND_TRIGGER: Attempting MERGE. Full Recipe Data from DB: {recipe_data}")
+        print(f"BACKGROUND_TRIGGER: Relative raw_clips_path from DB for '{recipe_id}': '{relative_clips_path_from_db}'")
+        
+        absolute_clips_path = None
+        path_exists = False
+        if relative_clips_path_from_db and isinstance(relative_clips_path_from_db, str):
+            absolute_clips_path = os.path.join(TEMP_PROCESSING_BASE_DIR, relative_clips_path_from_db)
+            path_exists = os.path.exists(absolute_clips_path)
+            print(f"BACKGROUND_TRIGGER: For '{recipe_id}', absolute_clips_path is '{absolute_clips_path}'. os.path.exists evaluation: {path_exists}")
+        else:
+            print(f"BACKGROUND_TRIGGER: For '{recipe_id}', relative_clips_path_from_db is None or not a string: '{relative_clips_path_from_db}'")
+        
+        if relative_clips_path_from_db and path_exists: # Check relative_clips_path_from_db for truthiness too
+            print(f"BACKGROUND_TRIGGER: Triggering MERGING for {recipe_id} using relative path '{relative_clips_path_from_db}' (resolved to '{absolute_clips_path}')")
+            update_recipe_status(recipe_id=recipe_id, name=recipe_name_orig, status="MERGING")
+            # Pass the RELATIVE path to the background task. The service function will make it absolute.
+            background_tasks.add_task(video_editor.merge_videos_and_replace_audio, relative_clips_path_from_db, recipe_id, recipe_name_orig)
+            print(f"BACKGROUND_TRIGGER: MERGING task for {recipe_id} ADDED to background_tasks.")
+        else:
+            err_msg = f"Automated MERGE trigger for '{recipe_name_orig}' ({recipe_id}) failed. Relative path '{relative_clips_path_from_db}' (resolved to '{absolute_clips_path}', exists: {path_exists}) not valid."
+            print(f"BACKGROUND_TRIGGER: ERROR - {err_msg}")
             update_recipe_status(recipe_id=recipe_id, name=recipe_name_orig, status="MERGE_FAILED", error_message=err_msg)
     
-    elif current_status == "MERGED":
-        merged_video_path = recipe_data.get("merged_video_path")
-        if merged_video_path and os.path.exists(merged_video_path):
-            print(f"BACKGROUND_TRIGGER: Triggering METADATA_GENERATION for {recipe_id} from {merged_video_path}")
-            update_recipe_status(recipe_id=recipe_id, name=recipe_name_orig, status="GENERATING_METADATA")
-            background_tasks.add_task(gemini.generate_youtube_metadata_from_video_info, merged_video_path, recipe_id, recipe_name_orig)
+    elif normalized_status == "MERGED" or normalized_status == "METADATA_FAILED": # Retry metadata if it previously failed
+        if normalized_status == "METADATA_FAILED":
+            print(f"BACKGROUND_TRIGGER: Retrying METADATA_GENERATION for '{recipe_id}' which previously failed.")
         else:
-            err_msg = f"Merged video path {merged_video_path} not found for METADATA_GENERATION."
-            print(f"BACKGROUND_TRIGGER: ERROR for {recipe_id} - {err_msg}")
-            update_recipe_status(recipe_id=recipe_id, name=recipe_name_orig, status="METADATA_FAILED", error_message=err_msg)
+            print(f"BACKGROUND_TRIGGER: Condition normalized_status == 'MERGED' met for '{recipe_id}'.")
 
-    elif current_status == "METADATA_GENERATED":
+        # The gemini service function generate_youtube_metadata_from_video_info does not directly use a local path for video content anymore.
+        # It primarily uses recipe_db_id to fetch GDrive IDs and other info from the database.
+        # Check if merged_video_gdrive_id exists, as Gemini might benefit from knowing it's available, even if not directly using the file content for this prompt.
+        merged_video_gdrive_id = recipe_data.get("merged_video_gdrive_id")
+        if not merged_video_gdrive_id:
+            err_msg = f"merged_video_gdrive_id not found in DB for recipe '{recipe_name_orig}' ({recipe_id}). Cannot trigger METADATA_GENERATION."
+            print(f"BACKGROUND_TRIGGER: ERROR - {err_msg}")
+            update_recipe_status(recipe_id=recipe_id, name=recipe_name_orig, status="METADATA_FAILED", error_message=err_msg)
+            return # Stop further processing for this path
+            
+        print(f"BACKGROUND_TRIGGER: Triggering METADATA_GENERATION for {recipe_id}. Full Recipe Data: {recipe_data}")
+        update_recipe_status(recipe_id=recipe_id, name=recipe_name_orig, status="GENERATING_METADATA")
+        # When auto-triggering, custom_prompt_str is None, so gemini service uses its default prompt.
+        background_tasks.add_task(gemini.generate_youtube_metadata_from_video_info, recipe_db_id=recipe_id, recipe_name_orig=recipe_name_orig, custom_prompt_str=None)
+        print(f"BACKGROUND_TRIGGER: METADATA_GENERATION task for {recipe_id} ADDED to background_tasks.")
+        # The stray 'else' block that caused the SyntaxError has been removed.
+
+    elif normalized_status == "METADATA_GENERATED": # Use normalized_status here
         # This status means it's ready for preview. No automatic background task from here.
         # The user will initiate YouTube upload from the preview page.
         print(f"BACKGROUND_TRIGGER: Recipe {recipe_id} is METADATA_GENERATED. Ready for preview and manual YouTube upload trigger.")
@@ -74,37 +108,52 @@ async def select_folder_page(request: Request, message: str = None, error: str =
         "error": error
     })
 
+from config import TEMP_PROCESSING_BASE_DIR, RAW_DIR # Import new config vars
+
 @router.post("/fetch_clips", name="fetch_clips_route")
 async def fetch_clips_route(background_tasks: BackgroundTasks, folder_id: str = Form(...), folder_name: str = Form(...)):
     print(f"ROUTE /fetch_clips: Request for folder ID: {folder_id}, Name: {folder_name}")
     safe_folder_name = "".join(c if c.isalnum() else "_" for c in folder_name)
-    download_path = os.path.join(RAW_DIR, safe_folder_name)
-
-    if not os.path.exists(RAW_DIR): os.makedirs(RAW_DIR)
-    if not os.path.exists(download_path): os.makedirs(download_path)
-
-    update_recipe_status(recipe_id=folder_id, name=folder_name, status="DOWNLOADING", raw_clips_path=download_path) # Set status
     
-    success = gdrive.download_folder_contents(folder_id, folder_name, download_path)
+    # RAW_DIR from config is already the absolute, environment-specific path to .../raw_clips_temp/
+    # download_path is the absolute path to the specific recipe's raw clips folder for the current environment
+    absolute_download_path = os.path.join(RAW_DIR, safe_folder_name)
+
+    # config.py now handles creation of RAW_DIR
+    os.makedirs(absolute_download_path, exist_ok=True) # Ensure specific recipe folder exists
+
+    # Path to be stored in DB should be relative to TEMP_PROCESSING_BASE_DIR
+    relative_download_path_for_db = os.path.relpath(absolute_download_path, TEMP_PROCESSING_BASE_DIR)
+
+    update_recipe_status(recipe_id=folder_id, name=folder_name, status="DOWNLOADING", raw_clips_path=relative_download_path_for_db) # Store relative path
     
-    if success:
-        # gdrive.download_folder_contents already updates to DOWNLOADED or DOWNLOAD_FAILED
-        # Now trigger the merge task if download was successful
-        current_recipe_info = get_recipe_status(folder_id)
-        if current_recipe_info and current_recipe_info.get("status") == "DOWNLOADED":
-            update_recipe_status(recipe_id=folder_id, name=folder_name, status="MERGING") # Set before adding task
-            background_tasks.add_task(video_editor.merge_videos_and_replace_audio, download_path, folder_id, folder_name)
-            msg = f"Clips for '{folder_name}' downloaded. Merging started in background."
-            return RedirectResponse(url=f"/select_folder?message={msg}", status_code=303)
-        else:
-            # This case should ideally be handled by gdrive service setting DOWNLOAD_FAILED
-            error_msg = current_recipe_info.get("error_message", f"Download failed for {folder_name}, merge not started.")
-            return RedirectResponse(url=f"/select_folder?error={error_msg}", status_code=303)
+    gdrive.download_folder_contents(folder_id, folder_name, absolute_download_path) # Pass absolute path for actual download
+    
+    # After download attempt, get the true status from the DB
+    current_recipe_info = get_recipe_status(folder_id)
+    current_status_from_db = current_recipe_info.get("status") if current_recipe_info else None
+
+    if current_status_from_db == "DOWNLOADED":
+        # When adding merge task, we need to pass the path that video_editor will use.
+        # video_editor will also need to be aware of TEMP_PROCESSING_BASE_DIR to resolve the relative path it gets from DB.
+        # For now, the `background_tasks.add_task` will receive the relative path stored in the DB.
+        # The `merge_videos_and_replace_audio` function itself will need to construct the absolute path.
+        relative_clips_path_from_db = current_recipe_info.get("raw_clips_path") # This is relative
+
+        update_recipe_status(recipe_id=folder_id, name=folder_name, status="MERGING") # Set before adding task
+        background_tasks.add_task(video_editor.merge_videos_and_replace_audio, relative_clips_path_from_db, folder_id, folder_name)
+        msg = f"Clips for '{folder_name}' downloaded successfully. Merging started in background."
+        return RedirectResponse(url=f"/select_folder?message={msg}", status_code=303)
     else:
-        # gdrive service already sets DOWNLOAD_FAILED and error message
-        db_entry = get_recipe_status(folder_id)
-        error_message = db_entry.get("error_message", f"Download failed for {folder_name}. Check logs.") if db_entry else f"Download failed for {folder_name}. Check logs."
-        return RedirectResponse(url=f"/select_folder?error={error_message}", status_code=303)
+        # If status is not DOWNLOADED, it implies a failure during download (e.g., DOWNLOAD_FAILED)
+        error_msg = "Unknown error after download attempt."
+        if current_recipe_info and current_recipe_info.get("error_message"):
+            error_msg = current_recipe_info.get("error_message")
+        elif current_status_from_db:
+            error_msg = f"Download process resulted in status: {current_status_from_db}. Merge not started."
+        else:
+            error_msg = f"Could not retrieve status for {folder_name} after download attempt. Merge not started."
+        return RedirectResponse(url=f"/select_folder?error={error_msg}", status_code=303)
 
 
 @router.get("/preview/{recipe_db_id}", response_class=HTMLResponse, name="preview_recipe_route")
@@ -163,6 +212,10 @@ async def preview_video_page(request: Request, recipe_db_id: str):
             raise FileNotFoundError("Failed to download video from GDrive for preview.")
 
         video_url = f"/static/preview_cache/{preview_temp_dir_name}/{local_temp_video_filename}"
+
+        # Get default prompt for UI
+        video_path_context_for_prompt = f"Google Drive File ID: {merged_video_gdrive_id}"
+        default_gemini_prompt = gemini.get_default_gemini_prompt(recipe_name_orig, video_path_context_for_prompt)
         
         return templates.TemplateResponse("preview.html", {
             "request": request, "recipe_db_id": recipe_db_id, "recipe_name_safe": recipe_name_safe,
@@ -170,6 +223,7 @@ async def preview_video_page(request: Request, recipe_db_id: str):
             "video_gdrive_id": merged_video_gdrive_id, 
             "video_url": video_url, "metadata": metadata_content,
             "current_status": current_status, 
+            "default_gemini_prompt": default_gemini_prompt, # Pass default prompt
             "error_message": recipe_data.get("error_message"),
             "youtube_url": recipe_data.get("youtube_url") # Pass YouTube URL if it exists
         })
@@ -184,27 +238,36 @@ async def preview_video_page(request: Request, recipe_db_id: str):
         if local_recipe_preview_dir and os.path.exists(local_recipe_preview_dir) and not os.listdir(local_recipe_preview_dir): os.rmdir(local_recipe_preview_dir)
         return templates.TemplateResponse("preview.html", {"request": request, "recipe_db_id": recipe_db_id, "recipe_name_display": recipe_name_orig, "error_message": f"Error loading preview: {str(e)}."})
 
-@router.post("/trigger_metadata_generation/{recipe_db_id}")
-async def trigger_metadata_route(background_tasks: BackgroundTasks, recipe_db_id: str):
+@router.post("/regenerate_metadata/{recipe_db_id}", name="regenerate_metadata_route")
+async def regenerate_metadata_route(request: Request, background_tasks: BackgroundTasks, recipe_db_id: str, custom_gemini_prompt: str = Form(...)):
     recipe_data = get_recipe_status(recipe_db_id)
     if not recipe_data:
         raise HTTPException(status_code=404, detail="Recipe not found")
 
     recipe_name_orig = recipe_data.get("name", "Unknown Recipe")
-    merged_video_path = recipe_data.get("merged_video_path")
-    current_status = recipe_data.get("status")
+    # merged_video_path is not directly used by gemini.py anymore, it uses GDrive ID from db
+    # current_status = recipe_data.get("status") # We might allow regeneration from different statuses
 
-    if current_status != "MERGED":
-        return RedirectResponse(url=f"/select_folder?error=Recipe '{recipe_name_orig}' is not in MERGED state. Current: {current_status}", status_code=303)
+    # Validate prompt basic length if necessary, or trust user input for now
+    if not custom_gemini_prompt or len(custom_gemini_prompt) < 50: # Arbitrary minimum length
+         # Redirect back to preview page with an error
+        # This requires passing all necessary data back to preview.html, or just a simple error to select_folder
+        error_msg = "Custom prompt was too short or missing."
+        # Ideally, redirect back to preview with the error, but that's more complex. For now:
+        return RedirectResponse(url=f"/preview/{recipe_db_id}?error={error_msg}", status_code=303)
 
-    if not merged_video_path or not os.path.exists(merged_video_path):
-        update_recipe_status(recipe_id=recipe_db_id, name=recipe_name_orig, status="METADATA_FAILED", error_message=f"Merged video path {merged_video_path} not found.")
-        return RedirectResponse(url=f"/select_folder?error=Merged_video_for_{recipe_name_orig}_not_found_cannot_generate_metadata.", status_code=303)
 
     update_recipe_status(recipe_id=recipe_db_id, name=recipe_name_orig, status="GENERATING_METADATA")
-    background_tasks.add_task(gemini.generate_youtube_metadata_from_video_info, merged_video_path, recipe_db_id, recipe_name_orig)
-    msg = f"Metadata generation started in background for '{recipe_name_orig}'."
-    return RedirectResponse(url=f"/select_folder?message={msg}", status_code=303)
+    background_tasks.add_task(
+        gemini.generate_youtube_metadata_from_video_info, 
+        recipe_db_id=recipe_db_id, 
+        recipe_name_orig=recipe_name_orig,
+        custom_prompt_str=custom_gemini_prompt
+    )
+    msg = f"Custom metadata generation started for '{recipe_name_orig}'. You will be redirected to preview page once done (refresh if needed)."
+    # Redirect back to preview page after triggering, so user sees updates there.
+    return RedirectResponse(url=f"/preview/{recipe_db_id}?message={msg}", status_code=303)
+
 
 @router.post("/upload_youtube", name="upload_to_youtube_route")
 async def upload_to_youtube_endpoint(background_tasks: BackgroundTasks, 
@@ -266,3 +329,25 @@ async def trigger_next_step_route(background_tasks: BackgroundTasks, recipe_id: 
     status_now = recipe_data.get("status", "Unknown") if recipe_data else "Unknown"
     return RedirectResponse(url=f"/select_folder?message=Attempted_to_trigger_next_step_for_{recipe_id}._Current_status:_{status_now}", status_code=303)
 
+
+@router.post("/reset_recipe/{recipe_db_id}", name="reset_recipe_route")
+async def reset_recipe_endpoint(request: Request, recipe_db_id: str):
+    print(f"ROUTE /reset_recipe: Request to reset recipe ID: {recipe_db_id}")
+    # It might be good to get recipe_name here too for the message, but not strictly needed for reset logic itself
+    
+    # Call the utility function to reset the recipe in the database
+    # This function should set status to "New" and clear relevant fields
+    from utils import reset_recipe_in_db # Ensure it's imported
+    success = reset_recipe_in_db(recipe_db_id)
+
+    if success:
+        msg = f"Recipe_ID_{recipe_db_id}_has_been_reset_to_New_status."
+        # Optional: Add logic here to delete local temp files associated with this recipe_db_id
+        # This would involve constructing paths based on TEMP_PROCESSING_BASE_DIR and recipe_db_id/name
+        # e.g., shutil.rmtree(os.path.join(TEMP_PROCESSING_BASE_DIR, "raw_clips_temp", safe_recipe_name)) etc.
+        # For now, we primarily reset the DB entry.
+    else:
+        msg = f"Error:_Could_not_reset_recipe_ID_{recipe_db_id}._It_might_not_exist_in_the_database."
+        return RedirectResponse(url=f"/select_folder?error={msg}", status_code=303)
+
+    return RedirectResponse(url=f"/select_folder?message={msg}", status_code=303)

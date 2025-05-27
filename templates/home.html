@@ -3,17 +3,14 @@
 {% block title %}Welcome - YT AutoHouse{% endblock %}
 
 {% block content %}
-    <article>
-        <header>
-            <hgroup>
-                <h1>Welcome to YT AutoHouse!</h1>
-                <h2>Your automated YouTube cooking channel assistant.</h2>
-            </hgroup>
-        </header>
+    <div class="container">
+        <h1 class="page-title">Welcome to YT AutoHouse!</h1>
+        <p class="lead" style="font-size: 1.25em; font-weight: 300; margin-bottom: 1.5em;">Your automated YouTube cooking channel assistant.</p>
+        
         <p>This tool helps you process raw recipe clips from Google Drive, generate metadata using AI, edit videos, and prepare them for YouTube upload.</p>
         
-        <footer>
-            <a href="{{ url_for('select_folder_route') }}" role="button" class="contrast">Get Started: Select a Recipe</a>
-        </footer>
-    </article>
+        <div style="margin-top: 2em; text-align: center;">
+            <a href="{{ url_for('select_folder_route') }}" class="button">Get Started: Select a Recipe</a>
+        </div>
+    </div>
 {% endblock %}

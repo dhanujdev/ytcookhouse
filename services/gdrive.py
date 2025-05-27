@@ -281,22 +281,38 @@ def list_folders_from_gdrive_and_db_status():
     for folder in gdrive_folders:
         folder_id = folder["id"]
         folder_name_from_gdrive = folder["name"]
+        if folder_name_from_gdrive == ".ipynb_checkpoints":
+            print(f"Skipping folder: {folder_name_from_gdrive}")
+            continue # Skip this iteration
         db_entry = db_recipes.get(folder_id)
-        status_display = "New"
+        status_from_db_value = "New" # Default for truly new folders / if no db_entry
         display_name_with_status = folder_name_from_gdrive
         youtube_url_from_db = None
+
         if db_entry:
-            status_from_db = db_entry.get("status", "Unknown")
-            status_display = status_from_db.replace("_", " ").title()
-            display_name_with_status = f"{folder_name_from_gdrive} (Status: {status_display})"
-            if status_from_db == "uploaded":
-                youtube_url_from_db = db_entry.get("youtube_url")
-                display_name_with_status = f"{folder_name_from_gdrive} (✅ Uploaded)"
-            elif status_from_db == "failed" or "failed" in status_from_db.lower(): # more robust check for failed status
-                 display_name_with_status = f"{folder_name_from_gdrive} (❌ Failed: {db_entry.get('error_message','N/A')[:30]}...)"
+            status_from_db_value = db_entry.get("status", "Unknown")
+            # Ensure status_from_db_value is a string before calling .upper() or other string methods
+            if not isinstance(status_from_db_value, str):
+                status_from_db_value = str(status_from_db_value) # Convert if not string, e.g. if None or other type
+
+        status_display_text = status_from_db_value.replace("_", " ").title()
+        
+        # Update display_name_with_status based on the (potentially hacked) status_from_db_value
+        if status_from_db_value == "New" or status_from_db_value == "Unknown":
+            display_name_with_status = folder_name_from_gdrive
+        elif status_from_db_value.upper() == "UPLOADED_TO_YOUTUBE" or status_from_db_value == "uploaded": # Accommodate both case from potential manual edits or old data
+            youtube_url_from_db = db_entry.get("youtube_url") if db_entry else None
+            display_name_with_status = f"{folder_name_from_gdrive} (✅ Uploaded)"
+        elif "FAILED" in status_from_db_value.upper():
+            error_msg_snippet = db_entry.get('error_message','N/A')[:30] if db_entry else 'N/A'
+            display_name_with_status = f"{folder_name_from_gdrive} (❌ Failed: {error_msg_snippet}...)"
+        else:
+            display_name_with_status = f"{folder_name_from_gdrive} (Status: {status_display_text})"
+            
         enriched_folders.append({
             "id": folder_id, "name": folder_name_from_gdrive,
-            "display_name": display_name_with_status, "status_from_db": status_display,
+            "display_name": display_name_with_status, 
+            "status_from_db": status_from_db_value, # Use the potentially modified status for logic
             "youtube_url": youtube_url_from_db
         })
     print(f"Enriched folders with DB status: {json.dumps(enriched_folders, indent=2)}")

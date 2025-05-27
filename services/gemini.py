@@ -4,7 +4,8 @@ import sys
 import tempfile
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from config import OUTPUT_DIR as LOCAL_TEMP_OUTPUT_DIR, GEMINI_API_KEY, GOOGLE_DRIVE_APP_DATA_FOLDER_NAME
+# Use METADATA_TEMP_DIR which is the absolute path from config
+from config import METADATA_TEMP_DIR, GEMINI_API_KEY, GOOGLE_DRIVE_APP_DATA_FOLDER_NAME 
 from utils import update_recipe_status, get_recipe_status # get_recipe_status for fetching GDrive ID
 from services import gdrive # Import gdrive service
 import google.generativeai as genai
@@ -12,9 +13,46 @@ import google.generativeai as genai
 class GeminiServiceError(Exception):
     pass
 
-def generate_youtube_metadata_from_video_info(recipe_db_id: str, recipe_name_orig: str):
+def get_default_gemini_prompt(recipe_name_orig: str, video_path_context_for_prompt: str) -> str:
+    """Generates the default prompt for Gemini metadata generation, with guidance for UI customization."""
+    return f'''
+    You are YTGenie, an expert YouTube content strategist and wordsmith, specializing in creating viral-worthy content for cooking channels. 
+    Your tone should be: [Specify Tone - e.g., "friendly and engaging", "humorous and informative", "professional for a Telugu-speaking audience"]. Default is friendly and engaging.
+    The video is for a recipe titled: "{recipe_name_orig}".
+    Video context (e.g., GDrive ID, not directly accessible by AI): {video_path_context_for_prompt}
+    
+    Key details to incorporate (user-provided if available, otherwise infer or be general):
+    - Main Ingredients: [User: List key ingredients, e.g., "Chicken, Basmati Rice, Whole Spices"]
+    - Brief Process Overview: [User: Briefly describe main steps, e.g., "Marination, Layering, Dum Cooking"]
+    - Target Audience Notes: [User: e.g., "Explain steps simply for beginners", "Highlight health benefits", "Mention cultural significance for Telugu viewers"]
+
+    Please generate the following metadata in strict JSON format. Output ONLY the raw JSON object:
+    {{
+        "title": "string (max 100 chars, SEO-friendly, include '{recipe_name_orig}'. Make it catchy and click-worthy! Example: The Perfect {recipe_name_orig} Recipe!)",
+        "description": "string (300-400 words). Structure:
+            1. Catchy opening (1-2 sentences) - what is the video about and why watch it?
+            2. Brief overview of the dish: taste, texture, uniqueness. [Incorporate Main Ingredients and Process Overview from above if provided by user]
+            3. Key cooking stages/highlights (without specific timestamps yet).
+            4. Call to action (e.g., subscribe, comment, like, visit website).
+            5. Relevant hashtags (2-3, e.g., #{recipe_name_orig.replace(" ", "")}, #EasyCooking, #[User: Add a custom hashtag]).",
+        "tags": "array of 12-15 strings (include '{recipe_name_orig}', variations, main ingredients [if provided by user], cooking style, cuisine type, occasion, e.g., 'dinner party', 'quick meal')",
+        "chapters": "array of 5-7 objects, each with '{{\"time\": \"[HH:MM:SS]\", \"label\": \"Descriptive chapter title\"}}'. Chapters should cover logical steps like: 
+            - Introduction / Ingredients Overview
+            - Preparation of [Main Component]
+            - Cooking Process Part 1 (e.g., Sautéing Aromatics)
+            - Cooking Process Part 2 (e.g., Adding Main Ingredients & Simmering)
+            - Final Steps / Garnishing
+            - Plating & Serving Suggestions
+            - Taste Test / Outro
+            Adjust based on the actual recipe flow.",
+        "transcript_suggestion": "string (50-100 words for a compelling video opening or a short summary for social media. Make it exciting! [Incorporate Target Audience Notes if provided by user])"
+    }}
+    Ensure all JSON strings are properly escaped. Focus on quality, engagement, and SEO.
+    '''
+
+def generate_youtube_metadata_from_video_info(recipe_db_id: str, recipe_name_orig: str, custom_prompt_str: str = None):
     # merged_video_gdrive_id will be fetched from DB
-    print(f"BACKGROUND TASK: Gemini: Starting metadata for {recipe_db_id} ({recipe_name_orig})")
+    print(f"BACKGROUND TASK: Gemini: Starting metadata for {recipe_db_id} ({recipe_name_orig}). Custom prompt provided: {bool(custom_prompt_str)}")
     
     current_db_status_on_exit = "METADATA_FAILED"
     error_message_on_exit = "Unknown Gemini error"
@@ -56,19 +94,13 @@ def generate_youtube_metadata_from_video_info(recipe_db_id: str, recipe_name_ori
         genai.configure(api_key=GEMINI_API_KEY)
         model = genai.GenerativeModel("gemini-1.5-flash")
 
-        prompt = f'''
-        You are an expert YouTube content strategist, specializing in cooking channels.
-        A video has been created for a recipe titled: "{recipe_name_orig}".
-        The video (context: {video_path_context_for_prompt}) shows the full cooking process.
-        Generate metadata in JSON format: title (string, include "{recipe_name_orig}", max 100 chars), 
-        description (string, 200-400 words, enticing summary, keywords, placeholder chapter timestamps, CTA, 2-3 hashtags), 
-        tags (array of 10-15 strings), 
-        chapters (array of objects with "time": string, "label": string; at least 3-5 chapters),
-        transcript_suggestion (string, 50-100 words for opening).
-        Output ONLY raw JSON. Ensure correct escaping.
-        '''
+        prompt_to_use = custom_prompt_str
+        if not prompt_to_use:
+            prompt_to_use = get_default_gemini_prompt(recipe_name_orig, video_path_context_for_prompt)
+        
         print(f"BACKGROUND TASK: Gemini: Sending prompt for {recipe_name_orig}...")
-        response = model.generate_content(prompt, generation_config=genai.types.GenerationConfig(candidate_count=1))
+        # print(f"Using Prompt:\n{prompt_to_use[:500]}...") # For debugging long prompts
+        response = model.generate_content(prompt_to_use, generation_config=genai.types.GenerationConfig(candidate_count=1))
 
         if not response.candidates or not response.text:
             block_reason = response.prompt_feedback.block_reason if response.prompt_feedback else "Unknown"
@@ -78,14 +110,15 @@ def generate_youtube_metadata_from_video_info(recipe_db_id: str, recipe_name_ori
         if gemini_output_text.strip().startswith("```json"):
             gemini_output_text = gemini_output_text.strip()[7:-3].strip()
         elif gemini_output_text.strip().startswith("```"):
-             gemini_output_text = gemini_output_text.strip()[3:-3].strip()
+            gemini_output_text = gemini_output_text.strip()[3:-3].strip()
         parsed_metadata = json.loads(gemini_output_text)
 
-        if not os.path.exists(LOCAL_TEMP_OUTPUT_DIR): os.makedirs(LOCAL_TEMP_OUTPUT_DIR)
+        # METADATA_TEMP_DIR from config is already the absolute, environment-specific path
+        # config.py ensures it exists
         safe_recipe_name = "".join(c if c.isalnum() else "_" for c in recipe_name_orig)
         
-        temp_metadata_file_obj = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json', dir=LOCAL_TEMP_OUTPUT_DIR, prefix=f"{safe_recipe_name}_")
-        local_temp_metadata_path = temp_metadata_file_obj.name
+        temp_metadata_file_obj = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json', dir=METADATA_TEMP_DIR, prefix=f"{safe_recipe_name}_")
+        local_temp_metadata_path = temp_metadata_file_obj.name # This is an absolute path
         json.dump(parsed_metadata, temp_metadata_file_obj, indent=4)
         temp_metadata_file_obj.close()
         print(f"BACKGROUND TASK: Gemini: Metadata saved locally to temp: {local_temp_metadata_path}")

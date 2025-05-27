@@ -3,92 +3,92 @@
 {% block title %}Select Recipe - YT AutoHouse{% endblock %}
 
 {% block content %}
-    <section id="select-recipe">
-        <hgroup>
-            <h2>Select a Recipe to Process</h2>
-            <h3>Choose a recipe folder from your Google Drive.</h3>
-        </hgroup>
+<div class="container">
+    <h1 class="page-title">Select a Recipe to Process</h1>
+    <p style="margin-bottom: 1.5em;">Choose a recipe folder from your Google Drive. The system will guide you through downloading, merging, metadata generation, and YouTube upload.</p>
 
-        {% if request.query_params.get("message") %}
-            <div class="message-container success">
-                {{ request.query_params.get("message").replace("_", " ") }}
-            </div>
-        {% endif %}
-        {% if request.query_params.get("error") %}
-            <div class="message-container error">
-                 {{ request.query_params.get("error").replace("_", " ") }}
-            </div>
-        {% endif %}
+    {% if request.query_params.get("message") %}
+        <div class="message">
+            {{ request.query_params.get("message").replace("_", " ") }}
+        </div>
+    {% endif %}
+    {% if request.query_params.get("error") %}
+        <div class="error">
+            {{ request.query_params.get("error").replace("_", " ") }}
+        </div>
+    {% endif %}
 
-        {% if folders %}
-            <form action="{{ url_for('fetch_clips_route') }}" method="post">
-                <fieldset>
-                    <legend>Available Google Drive Recipes</legend>
-                    {% for folder in folders %}
-                    <label for="{{ folder.id }}">
-                        <input type="radio" id="{{ folder.id }}" name="folder_id" value="{{ folder.id }}" required
-                               {% if folder.status_from_db == 'Uploaded' or (folder.status_from_db and 'Failed' in folder.status_from_db) %}disabled aria-disabled="true"{% endif %}>
-                        {{ folder.display_name }}
-                        {% if folder.status_from_db == 'Uploaded' and folder.youtube_url %}
-                            <small>(<a href="{{ folder.youtube_url }}" target="_blank">View on YouTube <mark>✅</mark></a>)</small>
-                        {% elif folder.status_from_db and 'Failed' in folder.status_from_db %}
-                            <small>(Processing Failed <mark>❌</mark> - Check logs for details: {{ folder.get('error_message', 'N/A') | truncate(50) }})</small>
-                        {% elif folder.status_from_db and folder.status_from_db not in ['New', 'Downloaded', 'Unknown', None] %}
-                             <small>(Status: {{ folder.status_from_db }})</small>
+    {% if folders %}
+        <ul class="folder-list">
+            {% for folder in folders %}
+            <li>
+                <div class="folder-info">
+                    <span class="folder-name">{{ folder.display_name }}</span>
+                    {% set status_class = folder.status_from_db.lower().replace(" ", "_") if folder.status_from_db else "unknown" %}
+                    <span class="folder-status">Status: 
+                        <span class="status-badge status-{{ status_class }}">{{ folder.status_from_db or 'New / Unknown' }}</span>
+                    </span>
+                    {% if 'failed' in status_class and folder.error_message %}
+                        <p class="error" style="font-size: 0.85em; padding: 0.5em; margin-top: 0.5em;">Error: {{ folder.error_message | truncate(100) }}</p>
+                    {% endif %}
+                    {% if folder.status_from_db == 'UPLOADED_TO_YOUTUBE' and folder.youtube_url %}
+                         <p style="font-size: 0.9em; margin-top: 0.3em;"><a href="{{ folder.youtube_url }}" target="_blank" class="button-link">View on YouTube <small>►</small></a></p>
+                    {% endif %}
+                </div>
+                <div class="folder-actions">
+                    {% if folder.status_from_db is none or folder.status_from_db == 'Unknown' or folder.status_from_db == 'New' %}
+                        <form action="{{ url_for('fetch_clips_route') }}" method="post" style="margin:0;">
+                            <input type="hidden" name="folder_id" value="{{ folder.id }}">
+                            <input type="hidden" name="folder_name" value="{{ folder.name }}">
+                            <button type="submit" class="button">Download & Process</button>
+                        </form>
+                    {% elif folder.status_from_db == 'MERGED' %}
+                        <a href="{{ url_for('preview_recipe_route', recipe_db_id=folder.id) }}#prompt-editor" class="button">Generate/Edit Metadata</a>
+                        <a href="{{ url_for('preview_recipe_route', recipe_db_id=folder.id) }}" class="button">Preview Video Only</a>
+                    {% elif folder.status_from_db == 'READY_FOR_PREVIEW' or folder.status_from_db == 'METADATA_GENERATED' or folder.status_from_db == 'UPLOAD_FAILED' %}
+                        <a href="{{ url_for('preview_recipe_route', recipe_db_id=folder.id) }}" class="button">Preview & Upload</a>
+                    {% elif folder.status_from_db == 'DOWNLOADED' or 'FAILED' in folder.status_from_db.upper() %}
+                         <form action="{{ url_for('trigger_next_step_route', recipe_id=folder.id) }}" method="post" style="margin:0; display: inline-block;">
+                            <button type="submit" class="button">Retry/Trigger Next</button>
+                        </form>
+                        {% if folder.status_from_db != 'DOWNLOAD_FAILED' %}
+                        <a href="{{ url_for('preview_recipe_route', recipe_db_id=folder.id) }}" class="button">Preview (if available)</a>
                         {% endif %}
-                    </label>
-                    <input type="hidden" name="folder_name_for_{{ folder.id }}" value="{{ folder.name }}">
-                    {% endfor %}
-                </fieldset>
-                
-                <button type="submit" class="contrast">Download & Process Selected Recipe</button>
-            </form>
-            <!-- JavaScript to dynamically set the folder_name based on selected folder_id -->
-            <script>
-                document.addEventListener('DOMContentLoaded', function() {
-                    const form = document.querySelector('form');
-                    const radioButtons = form.querySelectorAll('input[type="radio"][name="folder_id"]');
+                    {% elif folder.status_from_db == 'UPLOADED_TO_YOUTUBE' %}
+                        <a href="{{ url_for('preview_recipe_route', recipe_db_id=folder.id) }}" class="button">View Details</a>
+                    {% else %}
+                        {# For other states, or if you want a generic trigger next #}
+                        <form action="{{ url_for('trigger_next_step_route', recipe_id=folder.id) }}" method="post" style="margin:0; display: inline-block;">
+                            <button type="submit" class="button">Trigger Next Step</button>
+                        </form>
+                         <a href="{{ url_for('preview_recipe_route', recipe_db_id=folder.id) }}" class="button">Preview (if available)</a>
+                    {% endif %}
 
-                    form.addEventListener('submit', function(event) {
-                        let selectedFolderId = null;
-                        radioButtons.forEach(radio => {
-                            if (radio.checked) {
-                                selectedFolderId = radio.value;
-                            }
-                        });
+                    {# Add Reset Button if not in a 'New' or initial state #}
+                    {% if folder.status_from_db and folder.status_from_db.upper() != 'NEW' and folder.status_from_db.upper() != 'UNKNOWN' %}
+                        <form action="{{ url_for('reset_recipe_route', recipe_db_id=folder.id) }}" method="post" style="margin:0; display: inline-block; margin-left: 5px;" onsubmit="return confirm('Are you sure you want to reset all progress for {{ folder.display_name }}? This will set its status to New and clear associated data in the database.');">
+                            <button type="submit" class="button" style="background-color: var(--color-error-border);">Reset</button>
+                        </form>
+                    {% endif %}
+                </div>
+            </li>
+            {% endfor %}
+        </ul>
+    {% else %}
+        <div class="container" style="text-align: center;">
+            <h2>No Recipe Folders Found</h2>
+            <p>No unprocessed recipe folders were found in your Google Drive, or there was an error fetching them.</p>
+            <p>Please ensure recipe folders are in the configured Google Drive source folder, or try refreshing the page.</p>
+            <p><a href="{{ url_for('home') }}" class="button">Back to Home</a></p>
+        </div>
+    {% endif %}
+</div>
 
-                        if (selectedFolderId) {
-                            const folderNameInput = form.querySelector(`input[type="hidden"][name="folder_name_for_${selectedFolderId}"]`);
-                            if (folderNameInput) {
-                                const existingFolderName = form.querySelector('input[type="hidden"][name="folder_name"]');
-                                if (existingFolderName) {
-                                    existingFolderName.remove();
-                                }
-                                const newFolderNameInput = document.createElement('input');
-                                newFolderNameInput.type = 'hidden';
-                                newFolderNameInput.name = 'folder_name';
-                                newFolderNameInput.value = folderNameInput.value;
-                                form.appendChild(newFolderNameInput);
-                            } else {
-                                alert('Could not find the folder name for the selected ID. Please refresh and try again.');
-                                event.preventDefault(); // Stop submission
-                                return;
-                            }
-                        } else {
-                            alert('Please select a recipe folder to process.');
-                            event.preventDefault(); // Stop submission
-                            return;
-                        }
-                    });
-                });
-            </script>
-        {% else %}
-            <article>
-                <header>No recipe folders found</header>
-                <p>No unprocessed recipe folders were found in your Google Drive, or there was an error fetching them.</p>
-                <p>Please ensure recipe folders are in the configured Google Drive source folder, or try refreshing the page.</p>
-                <footer><a href="{{ url_for('home') }}" role="button" class="secondary">Back to Home</a></footer>
-            </article>
-        {% endif %}
-    </section>
+<script>
+// Optional: Add any specific JavaScript for this page if needed later.
+// The previous script for combining folder_id and folder_name into a single form
+// is no longer strictly necessary as each action is now a separate form or link
+// that includes the folder.id (recipe_db_id) directly or via hidden fields.
+</script>
+
 {% endblock %}

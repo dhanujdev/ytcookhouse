@@ -131,6 +131,34 @@ def update_last_gdrive_scan_time():
     db["last_gdrive_scan"] = datetime.utcnow().isoformat()
     save_db(db)
 
+def reset_recipe_in_db(recipe_id: str):
+    """Resets a recipe's status and associated processing fields in the database to a 'New' state."""
+    db = load_db()
+    if "recipes" not in db or recipe_id not in db["recipes"]:
+        print(f"UTILS: Cannot reset recipe. ID '{recipe_id}' not found in DB.")
+        return False
+
+    original_name = db["recipes"][recipe_id].get("name", "Unknown Recipe") 
+    print(f"UTILS: Resetting recipe ID '{recipe_id}' ('{original_name}') to 'New' state.")
+
+    # Preserve original ID and name, clear everything else relevant to processing state
+    db["recipes"][recipe_id] = {
+        "id": recipe_id,
+        "name": original_name,
+        "status": "New",
+        "last_updated": datetime.utcnow().isoformat(),
+        "raw_clips_path": None,
+        "merged_video_gdrive_id": None,
+        "metadata_gdrive_id": None,
+        "youtube_url": None,
+        "error_message": None,
+        # Add any other fields that should be cleared upon reset
+        # e.g., 'merged_video_path': None, 'metadata_file_path': None, if you ever store them
+    }
+    save_db(db)
+    print(f"UTILS: Recipe ID '{recipe_id}' successfully reset.")
+    return True
+
 if __name__ == '__main__':
     print("Testing GDrive-backed utils.py...")
     # Test load (will try to init on GDrive if not exists)

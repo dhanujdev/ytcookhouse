@@ -3,77 +3,97 @@
 {% block title %}Preview: {{ recipe_name_display if recipe_name_display else recipe_name_safe }} - YT AutoHouse{% endblock %}
 
 {% block content %}
-    <article>
-        <header>
-            <hgroup>
-                <h2>Video & Metadata Preview</h2>
-                <h3>Recipe: {{ recipe_name_display if recipe_name_display else recipe_name_safe }}</h3>
-            </hgroup>
-        </header>
+<div class="container">
+    <h1 class="page-title">Video & Metadata Preview: {{ recipe_name_display if recipe_name_display else recipe_name_safe }}</h1>
 
-        {% if error_message %}
-            <div class="message-container error">
-                <p><strong>Error loading preview:</strong></p>
-                <p>{{ error_message }}</p>
-            </div>
-            <footer><a href="{{ url_for('select_folder_route') }}" role="button" class="secondary">Back to Recipe Selection</a></footer>
-        {% elif video_url and metadata %}
-            <figure>
-                <video controls preload="metadata" src="{{ video_url }}">
-                    Your browser does not support the video tag. Consider using a modern browser.
-                </video>
-                {% if video_url %}
-                <figcaption><small>Video file: {{ video_url.split('/')[-1] }}</small></figcaption>
-                {% endif %}
-            </figure>
+    {% if error_message %}
+        <div class="error">
+            <p><strong>Error loading preview:</strong></p>
+            <p>{{ error_message }}</p>
+        </div>
+        <div style="margin-top: 1.5em;">
+            <a href="{{ url_for('select_folder_route') }}" class="button">Back to Recipe Selection</a>
+        </div>
+    {% elif video_url and metadata %}
+        <div class="video-player-container">
+            <video controls preload="metadata" src="{{ video_url }}">
+                Your browser does not support the video tag. Consider using a modern browser.
+            </video>
+        </div>
+        {% if video_url %}
+            <p style="text-align: center; font-size: 0.9em; color: var(--color-muted-text);">Video file: {{ video_url.split('/')[-1] }}</p>
+        {% endif %}
 
-            <hr>
+        <hr style="margin: 2em 0;">
 
-            <form action="{{ url_for('upload_to_youtube_route') }}" method="post">
-                <input type="hidden" name="recipe_db_id" value="{{ recipe_db_id }}">
-                <input type="hidden" name="recipe_name_safe" value="{{ recipe_name_safe }}">
-                
-                <h3>Edit YouTube Metadata</h3>
+        AUTHENTICATION_ERROR_MESSAGE = "Authentication error. Please check your credentials and try again. If the problem persists, contact support."
+        
+        <div id="prompt-editor" class="card" style="padding: 1.5em; margin-bottom: 2em;">
+            <h2 style="font-weight: 400; color: var(--color-secondary-accent); border-bottom: 1px solid var(--color-border); padding-bottom: 0.5em; margin-bottom: 1em;">Gemini Prompt Editor</h2>
+            <form action="{{ url_for('regenerate_metadata_route', recipe_db_id=recipe_db_id) }}" method="post">
+                <div class="form-group">
+                    <label for="custom_gemini_prompt">Edit Prompt for Metadata Generation:</label>
+                    <p style="font-size: 0.9em; color: var(--color-muted-text); margin-bottom: 0.5em;">Modify the prompt below to customize titles, descriptions, chapters, and overall style (e.g., add 'make it for Telugu viewers', specify ingredients or steps like 'main ingredients: chicken, rice, spices; process: marinate, cook, garnish'). The model will attempt to follow your instructions.</p>
+                    <textarea id="custom_gemini_prompt" name="custom_gemini_prompt" rows="15" required>{{ default_gemini_prompt if default_gemini_prompt else 'Could not load default prompt.' }}</textarea>
+                </div>
+                <div class="action-buttons" style="margin-top: 1em;">
+                    <button type="submit" class="button">Generate/Re-generate Metadata with this Prompt</button>
+                </div>
+            </form>
+        </div>
 
+        <form action="{{ url_for('upload_to_youtube_route') }}" method="post" class="card" style="padding: 2em;">
+            <input type="hidden" name="recipe_db_id" value="{{ recipe_db_id }}">
+            <input type="hidden" name="video_gdrive_id" value="{{ video_gdrive_id }}"> <!-- Ensure this is passed to template -->
+            
+            <h2 style="font-weight: 400; color: var(--color-secondary-accent); border-bottom: 1px solid var(--color-border); padding-bottom: 0.5em; margin-bottom: 1em;">Confirm & Upload YouTube Metadata</h2>
+
+            <div class="form-group">
                 <label for="title">Title</label>
                 <input type="text" id="title" name="title" value="{{ metadata.title }}" required>
+            </div>
 
+            <div class="form-group">
                 <label for="description">Description</label>
                 <textarea id="description" name="description" rows="10" required>{{ metadata.description }}</textarea>
+            </div>
 
+            <div class="form-group">
                 <label for="tags">Tags (comma-separated)</label>
                 <input type="text" id="tags" name="tags" value="{{ metadata.tags | join(', ') if metadata.tags else '' }}">
-                
-                <details open> <!-- Chapters open by default -->
-                    <summary>Generated Chapters (for reference)</summary>
-                    {% if metadata.chapters and metadata.chapters|length > 0 %}
-                        <ul>
-                        {% for chapter in metadata.chapters %}
-                            <li><code>{{ chapter.time }}</code> - {{ chapter.label }}</li>
-                        {% endfor %}
-                        </ul>
-                    {% else %}
-                        <p><small>No chapters were generated or found in the metadata.</small></p>
-                    {% endif %}
-                </details>
-            
-                <details>
-                    <summary>View/Hide Transcript Preview (first ~500 characters)</summary>
-                    <pre><small>{{ metadata.transcript | truncate(500, True) if metadata.transcript else 'No transcript was generated or found.' }}</small></pre>
-                </details>
-                
-                <hr>
-                <button type="submit" class="contrast">Confirm & Upload to YouTube</button>
-            </form>
-            
-            <footer style="margin-top: 2rem;">
-                <a href="{{ url_for('select_folder_route') }}" role="button" class="secondary outline">Cancel & Process Another Recipe</a>
-            </footer>
-        {% else %}
-            <div class="message-container error">
-                 <p>Could not load video or metadata for preview. Please try selecting the folder again.</p>
             </div>
-            <footer><a href="{{ url_for('select_folder_route') }}" role="button" class="secondary">Back to Recipe Selection</a></footer>
-        {% endif %}
-    </article>
+            
+            <div class="metadata-display" style="margin-top: 1.5em;">
+                <h3>Generated Chapters (for reference)</h3>
+                {% if metadata.chapters and metadata.chapters|length > 0 %}
+                    <ul style="padding-left: 20px; font-size: 0.9em;">
+                    {% for chapter in metadata.chapters %}
+                        <li><code>{{ chapter.time }}</code> - {{ chapter.label }}</li>
+                    {% endfor %}
+                    </ul>
+                {% else %}
+                    <p><small>No chapters were generated or found in the metadata.</small></p>
+                {% endif %}
+            </div>
+        
+            <div class="metadata-display" style="margin-top: 1.5em;">
+                <h3>Transcript Preview (first ~500 characters)</h3>
+                <pre><small>{{ metadata.transcript | truncate(500, True) if metadata.transcript else 'No transcript was generated or found.' }}</small></pre>
+            </div>
+            
+            <div class="action-buttons" style="margin-top: 2em;">
+                <button type="submit" class="button">Confirm & Upload to YouTube</button>
+                <a href="{{ url_for('select_folder_route') }}" class="button" style="background-color: var(--color-muted-text);">Cancel</a>
+            </div>
+        </form>
+        
+    {% else %}
+        <div class="error">
+             <p>Could not load video or metadata for preview. Please try selecting the folder again.</p>
+        </div>
+        <div style="margin-top: 1.5em;">
+            <a href="{{ url_for('select_folder_route') }}" class="button">Back to Recipe Selection</a>
+        </div>
+    {% endif %}
+</div>
 {% endblock %}

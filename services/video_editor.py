@@ -8,7 +8,8 @@ import tempfile
 import shutil
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from config import MERGED_DIR as LOCAL_TEMP_MERGED_DIR, GOOGLE_DRIVE_APP_DATA_FOLDER_NAME
+# Import new config vars. LOCAL_TEMP_MERGED_DIR is now just MERGED_DIR from config.
+from config import TEMP_PROCESSING_BASE_DIR, MERGED_DIR, GOOGLE_DRIVE_APP_DATA_FOLDER_NAME 
 from utils import update_recipe_status
 from services import gdrive # Import gdrive service
 
@@ -43,9 +44,10 @@ PREPROCESS_IF_SHORTER_THAN_SECONDS = 1.5
 DEFAULT_PREPROCESS_FPS = "30"
 DEFAULT_PREPROCESS_RESOLUTION = "1280x720"
 
-def merge_videos_and_replace_audio(raw_clips_local_path: str, recipe_db_id: str, recipe_name_orig: str):
-    # raw_clips_local_path is the ephemeral path where raw clips were downloaded.
-    print(f"BACKGROUND TASK: VideoEditor: Starting for {recipe_db_id} ({recipe_name_orig}) from local: {raw_clips_local_path}")
+def merge_videos_and_replace_audio(relative_raw_clips_path_from_db: str, recipe_db_id: str, recipe_name_orig: str):
+    # relative_raw_clips_path_from_db is the path stored in db.json, relative to TEMP_PROCESSING_BASE_DIR.
+    absolute_raw_clips_local_path = os.path.join(TEMP_PROCESSING_BASE_DIR, relative_raw_clips_path_from_db)
+    print(f"BACKGROUND TASK: VideoEditor: Starting for {recipe_db_id} ({recipe_name_orig}). Relative raw clips path: '{relative_raw_clips_path_from_db}', Absolute: '{absolute_raw_clips_local_path}'")
     
     ffmpeg_cmd, ffprobe_cmd = "", ""
     temp_preprocess_dir_local = ""
@@ -71,16 +73,19 @@ def merge_videos_and_replace_audio(raw_clips_local_path: str, recipe_db_id: str,
         ffmpeg_cmd = get_ffmpeg_tool_path("ffmpeg")
         ffprobe_cmd = get_ffmpeg_tool_path("ffprobe")
 
-        if not os.path.isdir(raw_clips_local_path):
-            raise VideoEditingError(f"Raw clips local dir not found: {raw_clips_local_path}")
+        if not os.path.isdir(absolute_raw_clips_local_path):
+            raise VideoEditingError(f"Absolute raw clips local dir not found: {absolute_raw_clips_local_path}")
 
         video_extensions = ('*.mp4', '*.MP4', '*.mov', '*.MOV', '*.avi', '*.AVI', '*.mkv', '*.MKV')
-        unique_clip_paths = {os.path.normpath(p) for ext in video_extensions for p in glob.glob(os.path.join(raw_clips_local_path, ext))}
+        unique_clip_paths = {os.path.normpath(p) for ext in video_extensions for p in glob.glob(os.path.join(absolute_raw_clips_local_path, ext))}
 
         if not unique_clip_paths:
-            raise VideoEditingError(f"No video files found in local raw clips dir {raw_clips_local_path}")
+            raise VideoEditingError(f"No video files found in local raw clips dir {absolute_raw_clips_local_path}")
 
-        temp_preprocess_dir_local = tempfile.mkdtemp(prefix="barged_preprocess_", dir=raw_clips_local_path)
+        # Create preprocess dir inside the TEMP_PROCESSING_BASE_DIR for better organization if desired
+        # or keep it inside absolute_raw_clips_local_path if that's preferred for co-location.
+        # For simplicity, let's keep it within the specific recipe's raw clips folder.
+        temp_preprocess_dir_local = tempfile.mkdtemp(prefix="barged_preprocess_", dir=absolute_raw_clips_local_path)
         files_to_delete_locally.append(temp_preprocess_dir_local)
         
         clips_for_concat_list = []
@@ -107,15 +112,16 @@ def merge_videos_and_replace_audio(raw_clips_local_path: str, recipe_db_id: str,
         if not clips_for_concat_list:
             raise VideoEditingError(f"No clips remaining after filtering/pre-processing.")
 
-        if not os.path.exists(LOCAL_TEMP_MERGED_DIR): os.makedirs(LOCAL_TEMP_MERGED_DIR)
+        # MERGED_DIR from config is already absolute and env-specific
+        # os.makedirs(MERGED_DIR, exist_ok=True) # config.py handles this now
 
         safe_recipe_name = "".join(c if c.isalnum() else "_" for c in recipe_name_orig)
         local_intermediate_merged_filename = f"{safe_recipe_name}_merged_silent_temp.mp4"
-        local_intermediate_merged_path = os.path.join(LOCAL_TEMP_MERGED_DIR, local_intermediate_merged_filename)
+        local_intermediate_merged_path = os.path.join(MERGED_DIR, local_intermediate_merged_filename)
         files_to_delete_locally.append(local_intermediate_merged_path)
         
         gdrive_final_output_filename = f"{safe_recipe_name}_final.mp4" # Filename on Google Drive
-        local_final_output_path = os.path.join(LOCAL_TEMP_MERGED_DIR, gdrive_final_output_filename) # Local path before upload
+        local_final_output_path = os.path.join(MERGED_DIR, gdrive_final_output_filename) # Local path before upload
         files_to_delete_locally.append(local_final_output_path) # Will be cleaned up after upload
 
         list_file_path = os.path.join(temp_preprocess_dir_local, "ffmpeg_filelist.txt")
