@@ -30,4 +30,4 @@ COPY . .
 
 # The command to run your application
 # Render will inject the $PORT variable
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "$PORT"]
+CMD uvicorn main:app --host 0.0.0.0 --port $PORT
