@@ -15,7 +15,7 @@ import sys # Import sys for sys.exit()
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from utils import load_db, update_recipe_status
 from config import (
-    GDRIVE_FOLDER_ID,
+    GDRIVE_TARGET_FOLDER_ID,
     GOOGLE_AUTH_METHOD, 
     GOOGLE_SERVICE_ACCOUNT_INFO, 
     GOOGLE_SERVICE_ACCOUNT_FILE_PATH,
@@ -129,14 +129,14 @@ def list_folders_from_gdrive_and_db_status():
     Fetches recipe folders (subfolders) from the configured Google Drive parent folder 
     and enriches them with status from db.json.
     """
-    print(f"Listing folders from Google Drive parent ID: {GDRIVE_FOLDER_ID}")
-    if not GDRIVE_FOLDER_ID or GDRIVE_FOLDER_ID == "...":
+    print(f"Listing folders from Google Drive parent ID: {GDRIVE_TARGET_FOLDER_ID}")
+    if not GDRIVE_TARGET_FOLDER_ID or GDRIVE_TARGET_FOLDER_ID == "...":
         print("ERROR: GDRIVE_TARGET_FOLDER_ID is not configured in .env. Cannot list GDrive folders.")
         return []
 
     try:
         service = get_gdrive_service()
-        query = f"'{GDRIVE_FOLDER_ID}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+        query = f"'{GDRIVE_TARGET_FOLDER_ID}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
         results = service.files().list(q=query, pageSize=100, fields="nextPageToken, files(id, name)").execute()
         gdrive_folders = results.get('files', [])
     except Exception as e:
@@ -218,7 +218,7 @@ if __name__ == '__main__':
     else:
         print("No Google Auth method properly configured in .env / config.py. Test may fail.")
     
-    print(f"Target GDrive Folder ID: {GDRIVE_FOLDER_ID}")
+    print(f"Target GDrive Folder ID: {GDRIVE_TARGET_FOLDER_ID}")
     APP_DATA_FOLDER_ID_TEST = None # To be set after creating/getting it
     try:
         # Test: Get or create app data folder
