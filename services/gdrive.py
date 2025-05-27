@@ -16,16 +16,16 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from utils import load_db, update_recipe_status
 from config import (
     GDRIVE_TARGET_FOLDER_ID,
-    GOOGLE_AUTH_METHOD, 
-    GOOGLE_SERVICE_ACCOUNT_INFO, 
-    GOOGLE_SERVICE_ACCOUNT_FILE_PATH,
-    GOOGLE_CLIENT_SECRET_PATH_CONFIG # Renamed in config.py for clarity
+    GOOGLE_AUTH_METHOD,
+    GOOGLE_SERVICE_ACCOUNT_INFO
+    # GOOGLE_SERVICE_ACCOUNT_FILE_PATH, # No longer used
+    # GOOGLE_CLIENT_SECRET_PATH_CONFIG # No longer used
 )
 
 # --- Google Drive API Setup ---
 SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
-# Token file for OAuth2 flow (user consent)
-OAUTH_TOKEN_GDRIVE_PATH = os.path.join(os.path.dirname(__file__), '..', 'token_gdrive.json')
+# OAUTH_TOKEN_GDRIVE_PATH is no longer used as OAuth is removed from this service
+# OAUTH_TOKEN_GDRIVE_PATH = os.path.join(os.path.dirname(__file__), '..', 'token_gdrive.json')
 
 class GDriveServiceError(Exception):
     """Custom exception for GDrive service errors."""
@@ -33,80 +33,27 @@ class GDriveServiceError(Exception):
 
 def get_gdrive_service():
     """Authenticates and returns a Google Drive API service client.
-       Prioritizes Service Account, then OAuth2 InstalledAppFlow.
+       Uses Service Account with individual fields from config.py.
     """
     creds = None
-    auth_method_to_log = "Unknown"
 
-    if GOOGLE_AUTH_METHOD == "SERVICE_ACCOUNT_JSON_STRING" and GOOGLE_SERVICE_ACCOUNT_INFO:
-        auth_method_to_log = "Service Account (JSON string)"
-        print(f"GDrive Auth: Attempting with {auth_method_to_log}")
+    if GOOGLE_AUTH_METHOD == "SERVICE_ACCOUNT_INDIVIDUAL_FIELDS" and GOOGLE_SERVICE_ACCOUNT_INFO:
+        print(f"GDrive Auth: Attempting with Service Account (Individual Fields).")
         try:
             creds = ServiceAccountCredentials.from_service_account_info(
                 GOOGLE_SERVICE_ACCOUNT_INFO, scopes=SCOPES
             )
-            print(f"GDrive Auth: Successfully obtained credentials via {auth_method_to_log}.")
+            print(f"GDrive Auth: Successfully obtained credentials via Service Account (Individual Fields).")
         except Exception as e:
-            print(f"ERROR: GDrive Auth: Failed to load Service Account from JSON string: {e}")
-            raise GDriveServiceError(f"Service Account (JSON string) credential error: {e}")
-
-    elif GOOGLE_AUTH_METHOD == "SERVICE_ACCOUNT_FILE_PATH" and GOOGLE_SERVICE_ACCOUNT_FILE_PATH:
-        auth_method_to_log = f"Service Account (file path: {GOOGLE_SERVICE_ACCOUNT_FILE_PATH})"
-        print(f"GDrive Auth: Attempting with {auth_method_to_log}")
-        try:
-            creds = ServiceAccountCredentials.from_service_account_file(
-                GOOGLE_SERVICE_ACCOUNT_FILE_PATH, scopes=SCOPES
-            )
-            print(f"GDrive Auth: Successfully obtained credentials via {auth_method_to_log}.")
-        except Exception as e:
-            print(f"ERROR: GDrive Auth: Failed to load Service Account from file: {e}")
-            raise GDriveServiceError(f"Service Account (file path) credential error: {e}")
-
-    elif GOOGLE_AUTH_METHOD == "OAUTH_CLIENT_SECRET" and GOOGLE_CLIENT_SECRET_PATH_CONFIG:
-        auth_method_to_log = f"OAuth 2.0 Client Secret (file: {GOOGLE_CLIENT_SECRET_PATH_CONFIG})"
-        print(f"GDrive Auth: Attempting with {auth_method_to_log} (user consent flow if no token).")
-        if os.path.exists(OAUTH_TOKEN_GDRIVE_PATH):
-            try:
-                with open(OAUTH_TOKEN_GDRIVE_PATH, 'r') as token_file:
-                    creds = UserCredentials.from_authorized_user_info(json.load(token_file), SCOPES)
-                print(f"GDrive Auth: Loaded OAuth token from {OAUTH_TOKEN_GDRIVE_PATH}")
-            except Exception as e:
-                print(f"Warning: GDrive Auth: Error loading OAuth token from {OAUTH_TOKEN_GDRIVE_PATH}: {e}. Will attempt re-auth.")
-                creds = None
-        
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                try:
-                    creds.refresh(Request())
-                    print("GDrive Auth: OAuth token refreshed successfully.")
-                except Exception as e:
-                    print(f"Warning: GDrive Auth: Failed to refresh OAuth token: {e}. Re-authentication needed.")
-                    creds = None 
-            else:
-                try:
-                    flow = InstalledAppFlow.from_client_secrets_file(GOOGLE_CLIENT_SECRET_PATH_CONFIG, SCOPES)
-                    print("GDrive Auth: OAuth authentication required. Please follow browser prompts.")
-                    # Note: run_local_server might not be suitable for all server environments.
-                    # For Render, pre-authorized token (if OAuth is used) or SA is better.
-                    creds = flow.run_local_server(port=0)
-                except Exception as e:
-                    print(f"ERROR: GDrive Auth: Failed OAuth flow: {e}")
-                    raise GDriveServiceError(f"OAuth flow error: {e}")
-            
-            if creds:
-                try:
-                    with open(OAUTH_TOKEN_GDRIVE_PATH, 'w') as token_file:
-                        token_file.write(creds.to_json()) # Save user credentials as JSON
-                    print(f"GDrive Auth: OAuth token saved to {OAUTH_TOKEN_GDRIVE_PATH}")
-                except Exception as e:
-                    print(f"Warning: GDrive Auth: Error saving OAuth token to {OAUTH_TOKEN_GDRIVE_PATH}: {e}")
+            print(f"ERROR: GDrive Auth: Failed to load Service Account from GOOGLE_SERVICE_ACCOUNT_INFO: {e}")
+            raise GDriveServiceError(f"Service Account (Individual Fields) credential error: {e}")
     else:
-        msg = "GDrive Auth: No valid Google API credential method configured in config.py or .env."
+        msg = "GDrive Auth: SERVICE_ACCOUNT_INDIVIDUAL_FIELDS method not configured or GOOGLE_SERVICE_ACCOUNT_INFO missing in config.py."
         print(f"ERROR: {msg}")
         raise GDriveServiceError(msg)
 
-    if not creds:
-        msg = f"GDrive Auth: Failed to obtain credentials using method: {auth_method_to_log}."
+    if not creds: # Should be redundant if the above logic is sound, but as a safeguard.
+        msg = f"GDrive Auth: Failed to obtain credentials."
         print(f"ERROR: {msg}")
         raise GDriveServiceError(msg)
 
@@ -206,17 +153,12 @@ def download_folder_contents(folder_id: str, recipe_name: str, download_base_pat
         update_recipe_status(recipe_id=folder_id, name=recipe_name, status="download_failed", error_message=msg); return False
 
 if __name__ == '__main__':
-    print("Testing GDrive Service Module (with potential Service Account or OAuth)...")
-    print(f"Configured Google Auth Method: {GOOGLE_AUTH_METHOD}")
-    if GOOGLE_AUTH_METHOD == "SERVICE_ACCOUNT_JSON_STRING":
-        print("Service Account Key (content from .env): Parsed in config.")
-    elif GOOGLE_AUTH_METHOD == "SERVICE_ACCOUNT_FILE_PATH":
-        print(f"Service Account Key File Path: {GOOGLE_SERVICE_ACCOUNT_FILE_PATH}")
-    elif GOOGLE_AUTH_METHOD == "OAUTH_CLIENT_SECRET":
-        print(f"OAuth Client Secret Path: {GOOGLE_CLIENT_SECRET_PATH_CONFIG}")
-        print(f"OAuth User Token Path: {OAUTH_TOKEN_GDRIVE_PATH}")
+    print("Testing GDrive Service Module (Service Account with Individual Fields method)...")
+    print(f"Configured Google Auth Method from config.py: {GOOGLE_AUTH_METHOD}")
+    if GOOGLE_AUTH_METHOD == "SERVICE_ACCOUNT_INDIVIDUAL_FIELDS":
+        print("Attempting to use Service Account credentials constructed from individual .env variables.")
     else:
-        print("No Google Auth method properly configured in .env / config.py. Test may fail.")
+        print(f"Warning: Expected GOOGLE_AUTH_METHOD to be 'SERVICE_ACCOUNT_INDIVIDUAL_FIELDS', but got '{GOOGLE_AUTH_METHOD}'. Test may fail or use unexpected auth.")
     
     print(f"Target GDrive Folder ID: {GDRIVE_TARGET_FOLDER_ID}")
     APP_DATA_FOLDER_ID_TEST = None # To be set after creating/getting it

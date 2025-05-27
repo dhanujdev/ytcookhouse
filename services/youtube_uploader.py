@@ -14,9 +14,9 @@ import subprocess # Only for __main__ test dummy video
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from config import (
     GOOGLE_AUTH_METHOD,
-    GOOGLE_SERVICE_ACCOUNT_INFO,
-    GOOGLE_SERVICE_ACCOUNT_FILE_PATH,
-    GOOGLE_CLIENT_SECRET_PATH_CONFIG,
+    GOOGLE_SERVICE_ACCOUNT_INFO
+    # GOOGLE_SERVICE_ACCOUNT_FILE_PATH, # No longer used
+    # GOOGLE_CLIENT_SECRET_PATH_CONFIG, # No longer used
     # MERGED_DIR as LOCAL_TEMP_MERGED_DIR # For temp downloaded video storage
 )
 from utils import update_recipe_status, get_recipe_status # get_recipe_status for GDrive ID
@@ -30,38 +30,26 @@ API_VERSION = 'v3'
 class YouTubeUploaderError(Exception):
     pass
 
-def get_youtube_service(): # This function remains largely the same
+def get_youtube_service():
     creds = None
-    auth_method_to_log = "Unknown"
-    if GOOGLE_AUTH_METHOD == "SERVICE_ACCOUNT_JSON_STRING" and GOOGLE_SERVICE_ACCOUNT_INFO:
-        auth_method_to_log = "Service Account (JSON string)"
-        try: creds = ServiceAccountCredentials.from_service_account_info(GOOGLE_SERVICE_ACCOUNT_INFO, scopes=SCOPES_YOUTUBE)
-        except Exception as e: raise YouTubeUploaderError(f"SA JSON cred error: {e}")
-    elif GOOGLE_AUTH_METHOD == "SERVICE_ACCOUNT_FILE_PATH" and GOOGLE_SERVICE_ACCOUNT_FILE_PATH:
-        auth_method_to_log = f"Service Account (file path: {GOOGLE_SERVICE_ACCOUNT_FILE_PATH})"
-        try: creds = ServiceAccountCredentials.from_service_account_file(GOOGLE_SERVICE_ACCOUNT_FILE_PATH, scopes=SCOPES_YOUTUBE)
-        except Exception as e: raise YouTubeUploaderError(f"SA file cred error: {e}")
-    elif GOOGLE_AUTH_METHOD == "OAUTH_CLIENT_SECRET" and GOOGLE_CLIENT_SECRET_PATH_CONFIG:
-        auth_method_to_log = f"OAuth 2.0 Client Secret (file: {GOOGLE_CLIENT_SECRET_PATH_CONFIG})"
-        if os.path.exists(OAUTH_TOKEN_YOUTUBE_PATH):
-            try: creds = UserCredentials.from_authorized_user_info(json.load(open(OAUTH_TOKEN_YOUTUBE_PATH, 'r')), SCOPES_YOUTUBE)
-            except Exception: creds = None
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token: 
-                try: creds.refresh(Request())
-                except Exception: creds = None
-            else:
-                try:
-                    flow = InstalledAppFlow.from_client_secrets_file(GOOGLE_CLIENT_SECRET_PATH_CONFIG, SCOPES_YOUTUBE)
-                    creds = flow.run_local_server(port=0)
-                except Exception as e: raise YouTubeUploaderError(f"OAuth flow error: {e}")
-            if creds: 
-                with open(OAUTH_TOKEN_YOUTUBE_PATH, 'w') as token_file: token_file.write(creds.to_json())
-    else: raise YouTubeUploaderError("No valid Google API credential method configured.")
-    if not creds: raise YouTubeUploaderError(f"Failed to get credentials via {auth_method_to_log}.")
+    if GOOGLE_AUTH_METHOD == "SERVICE_ACCOUNT_INDIVIDUAL_FIELDS" and GOOGLE_SERVICE_ACCOUNT_INFO:
+        print(f"YouTube Auth: Attempting with Service Account (Individual Fields).")
+        try: 
+            creds = ServiceAccountCredentials.from_service_account_info(GOOGLE_SERVICE_ACCOUNT_INFO, scopes=SCOPES_YOUTUBE)
+            print(f"YouTube Auth: Successfully obtained credentials via Service Account (Individual Fields).")
+        except Exception as e: 
+            raise YouTubeUploaderError(f"YouTube Auth: SA Individual Fields cred error: {e}")
+    else: 
+        msg = "YouTube Auth: SERVICE_ACCOUNT_INDIVIDUAL_FIELDS method not configured or GOOGLE_SERVICE_ACCOUNT_INFO missing in config.py."
+        print(f"ERROR: {msg}")
+        raise YouTubeUploaderError(msg)
+    
+    if not creds: # Safeguard
+        raise YouTubeUploaderError("YouTube Auth: Failed to obtain credentials.")
+
     try: 
         service = build(API_SERVICE_NAME, API_VERSION, credentials=creds)
-        print(f"BACKGROUND TASK: YouTube Auth: Using {auth_method_to_log}. Client created.")
+        print(f"BACKGROUND TASK: YouTube Auth: Using Service Account (Individual Fields). Client created.")
         return service
     except Exception as e: raise YouTubeUploaderError(f"Failed to build YouTube service: {e}")
 

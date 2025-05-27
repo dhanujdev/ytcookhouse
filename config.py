@@ -6,28 +6,41 @@ BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 load_dotenv(os.path.join(BASE_DIR, '.env'))
 
 # --- Google API Credentials Configuration ---
-GOOGLE_SERVICE_ACCOUNT_CREDENTIALS_JSON_AS_STRING = os.getenv("GOOGLE_SERVICE_ACCOUNT_CREDENTIALS_JSON_CONTENT")
-GOOGLE_SERVICE_ACCOUNT_KEY_JSON_PATH_ENV = os.getenv("GOOGLE_SERVICE_ACCOUNT_KEY_JSON_PATH")
-GOOGLE_CLIENT_SECRET_FILENAME_ENV = os.getenv("GOOGLE_CLIENT_SECRET_JSON_FILENAME")
-GOOGLE_CLIENT_SECRET_PATH_CONFIG = os.path.join(BASE_DIR, GOOGLE_CLIENT_SECRET_FILENAME_ENV) if GOOGLE_CLIENT_SECRET_FILENAME_ENV else None
+# This configuration ONLY uses individual Service Account fields from environment variables.
+
+SA_TYPE = os.getenv("SA_TYPE", "service_account")
+SA_PROJECT_ID = os.getenv("SA_PROJECT_ID")
+SA_PRIVATE_KEY_ID = os.getenv("SA_PRIVATE_KEY_ID")
+SA_PRIVATE_KEY = os.getenv("SA_PRIVATE_KEY") # Must contain literal \n for newlines in .env
+SA_CLIENT_EMAIL = os.getenv("SA_CLIENT_EMAIL")
+SA_CLIENT_ID = os.getenv("SA_CLIENT_ID")
+SA_AUTH_URI = os.getenv("SA_AUTH_URI", "https://accounts.google.com/o/oauth2/auth")
+SA_TOKEN_URI = os.getenv("SA_TOKEN_URI", "https://oauth2.googleapis.com/token")
+SA_AUTH_PROVIDER_X509_CERT_URL = os.getenv("SA_AUTH_PROVIDER_X509_CERT_URL", "https://www.googleapis.com/oauth2/v1/certs")
+SA_CLIENT_X509_CERT_URL = os.getenv("SA_CLIENT_X509_CERT_URL")
 
 GOOGLE_AUTH_METHOD = None
 GOOGLE_SERVICE_ACCOUNT_INFO = None
-GOOGLE_SERVICE_ACCOUNT_FILE_PATH = None
+# GOOGLE_SERVICE_ACCOUNT_FILE_PATH and GOOGLE_CLIENT_SECRET_PATH_CONFIG are no longer used.
 
-if GOOGLE_SERVICE_ACCOUNT_CREDENTIALS_JSON_AS_STRING:
-    try:
-        GOOGLE_SERVICE_ACCOUNT_INFO = json.loads(GOOGLE_SERVICE_ACCOUNT_CREDENTIALS_JSON_AS_STRING)
-        GOOGLE_AUTH_METHOD = "SERVICE_ACCOUNT_JSON_STRING"
-    except json.JSONDecodeError as e:
-        print(f"ERROR CONFIG: Could not parse GOOGLE_SERVICE_ACCOUNT_CREDENTIALS_JSON_CONTENT: {e}.")
-elif GOOGLE_SERVICE_ACCOUNT_KEY_JSON_PATH_ENV and os.path.exists(GOOGLE_SERVICE_ACCOUNT_KEY_JSON_PATH_ENV):
-    GOOGLE_SERVICE_ACCOUNT_FILE_PATH = GOOGLE_SERVICE_ACCOUNT_KEY_JSON_PATH_ENV
-    GOOGLE_AUTH_METHOD = "SERVICE_ACCOUNT_FILE_PATH"
-elif GOOGLE_CLIENT_SECRET_PATH_CONFIG and os.path.exists(GOOGLE_CLIENT_SECRET_PATH_CONFIG):
-    GOOGLE_AUTH_METHOD = "OAUTH_CLIENT_SECRET"
+if SA_PROJECT_ID and SA_PRIVATE_KEY_ID and SA_PRIVATE_KEY and SA_CLIENT_EMAIL and SA_CLIENT_ID and SA_CLIENT_X509_CERT_URL:
+    GOOGLE_SERVICE_ACCOUNT_INFO = {
+        "type": SA_TYPE,
+        "project_id": SA_PROJECT_ID,
+        "private_key_id": SA_PRIVATE_KEY_ID,
+        "private_key": SA_PRIVATE_KEY.replace('\\n', '\n') if SA_PRIVATE_KEY else None,
+        "client_email": SA_CLIENT_EMAIL,
+        "client_id": SA_CLIENT_ID,
+        "auth_uri": SA_AUTH_URI,
+        "token_uri": SA_TOKEN_URI,
+        "auth_provider_x509_cert_url": SA_AUTH_PROVIDER_X509_CERT_URL,
+        "client_x509_cert_url": SA_CLIENT_X509_CERT_URL
+    }
+    GOOGLE_AUTH_METHOD = "SERVICE_ACCOUNT_INDIVIDUAL_FIELDS"
 else:
-    print("ERROR CONFIG: No valid Google API credentials found.")
+    print("ERROR CONFIG: Insufficient Google Service Account details in .env. Please set all SA_... variables.")
+    # You might want to raise an exception here or handle this more gracefully depending on your app's needs.
+    # For example: raise ValueError("Missing one or more SA_... environment variables for Google authentication.")
 
 # --- Google Drive Specific Configuration ---
 GDRIVE_TARGET_FOLDER_ID = os.getenv("GDRIVE_TARGET_FOLDER_ID", "...") # Source folder for raw recipe clips
