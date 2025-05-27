@@ -63,13 +63,19 @@ def merge_videos_and_replace_audio(background_tasks: BackgroundTasks, relative_r
     local_final_output_path = None # Keep track of the local final file before upload & cleanup
 
     try:
-        gdrive_service = gdrive.get_gdrive_service()
-        app_data_folder_id = gdrive.get_or_create_app_data_folder_id(service=gdrive_service)
+        # ---- DIAGNOSTIC STEP: Use a fresh GDrive client for this background task ----
+        print("BACKGROUND TASK: VideoEditor: Obtaining a fresh GDrive service client for this task.")
+        # Call the new factory function to get a new instance for this task
+        task_specific_gdrive_service = gdrive.create_gdrive_service() 
+        # ---- END DIAGNOSTIC STEP ----
+
+        # Use the task_specific_gdrive_service for GDrive operations within this function
+        app_data_folder_id = gdrive.get_or_create_app_data_folder_id(service=task_specific_gdrive_service)
         if not app_data_folder_id:
             raise VideoEditingError("Could not get/create GDrive App Data Folder for storing merged video.")
         
         recipe_merged_video_gdrive_folder_id = gdrive.get_or_create_recipe_subfolder_id(
-            app_data_folder_id, recipe_db_id, "merged_videos", service=gdrive_service
+            app_data_folder_id, recipe_db_id, "merged_videos", service=task_specific_gdrive_service
         )
         if not recipe_merged_video_gdrive_folder_id:
             raise VideoEditingError(f"Could not get/create GDrive subfolder for merged videos for recipe {recipe_db_id}")
@@ -165,14 +171,14 @@ def merge_videos_and_replace_audio(background_tasks: BackgroundTasks, relative_r
         print(f"BACKGROUND TASK: VideoEditor: Uploading {local_final_output_path} to GDrive folder {recipe_merged_video_gdrive_folder_id} as {gdrive_final_output_filename}")
         
         # Check if a file with the same name already exists in the target GDrive folder to update it
-        existing_gdrive_file_id = gdrive.find_file_id_by_name(recipe_merged_video_gdrive_folder_id, gdrive_final_output_filename, service=gdrive_service)
+        existing_gdrive_file_id = gdrive.find_file_id_by_name(recipe_merged_video_gdrive_folder_id, gdrive_final_output_filename, service=task_specific_gdrive_service)
         
         final_merged_gdrive_file_id = gdrive.upload_file_to_drive(
             local_file_path=local_final_output_path,
             drive_folder_id=recipe_merged_video_gdrive_folder_id,
             drive_filename=gdrive_final_output_filename,
             mimetype='video/mp4',
-            service=gdrive_service,
+            service=task_specific_gdrive_service,
             existing_file_id=existing_gdrive_file_id
         )
         if not final_merged_gdrive_file_id:

@@ -7,6 +7,14 @@
     <h1 class="page-title">Select a Recipe to Process</h1>
     <p style="margin-bottom: 1.5em;">Choose a recipe folder from your Google Drive. The system will guide you through downloading, merging, metadata generation, and YouTube upload.</p>
 
+    <div style="margin-bottom: 2em; padding: 1em; border: 1px solid var(--color-error-border); background-color: var(--color-error-bg);">
+        <h3 style="color: var(--color-error-text); margin-top: 0;">Advanced: Hard Reset Database</h3>
+        <p style="font-size:0.9em; color: var(--color-text-secondary);">This will wipe all recipe progress and statuses from the application's database (db.json on Google Drive), reverting it to an empty state. All recipes will appear as 'New'. This action is irreversible.</p>
+        <form action="{{ url_for('hard_reset_db_route') }}" method="post" onsubmit="return confirm('DANGER! Are you absolutely sure you want to hard reset the ENTIRE database? All current recipe progress will be lost. This cannot be undone!');">
+            <button type="submit" class="button" style="background-color: var(--color-error-text); color: white; border-color: var(--color-error-border); font-weight: bold;">Hard Reset Entire Database</button>
+        </form>
+    </div>
+
     {% if request.query_params.get("message") %}
         <div class="message">
             {{ request.query_params.get("message").replace("_", " ") }}

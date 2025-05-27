@@ -24,37 +24,25 @@ class GeminiServiceError(Exception):
 # Store the model name globally within the module or fetch from config if it can vary
 DEFAULT_GEMINI_MODEL_NAME = "gemini-1.5-flash"
 
-def get_gemini_model(model_name: str = DEFAULT_GEMINI_MODEL_NAME, bypass_shared_client=False):
+def create_gemini_model(model_name: str = DEFAULT_GEMINI_MODEL_NAME): # Renamed and simplified
     """
     Configures genai and returns an instance of GenerativeModel.
-    Uses a shared model instance after initial successful creation unless bypass_shared_client is True.
     """
-    if not bypass_shared_client and GEMINI_SERVICE_CLIENT:
-        # print("Gemini Service: Returning shared model instance.") # Optional for debugging
-        return GEMINI_SERVICE_CLIENT
-    
-    print(f"Gemini Service: Attempting to configure API and get model: {model_name}...")
+    print(f"Gemini Model Factory: Attempting to configure API and get model: {model_name}...")
     if not GEMINI_API_KEY or GEMINI_API_KEY == "...":
-        msg = "Gemini Service Error: GEMINI_API_KEY is not configured in config.py."
+        msg = "Gemini Model Factory Error: GEMINI_API_KEY is not configured in config.py."
         print(f"ERROR: {msg}")
-        if bypass_shared_client: APP_STARTUP_STATUS["gemini_error_details"] = msg
         raise GeminiServiceError(msg)
     
     try:
         genai.configure(api_key=GEMINI_API_KEY)
-        print("Gemini Service: genai.configure called successfully.")
+        print("Gemini Model Factory: genai.configure called successfully.")
         model = genai.GenerativeModel(model_name)
-        print(f"Gemini Service: GenerativeModel instance for '{model_name}' created.")
-        
-        if GEMINI_SERVICE_CLIENT is None or bypass_shared_client:
-            import config # Import config directly to modify its attributes
-            config.GEMINI_SERVICE_CLIENT = model
-            print("Gemini Service: New model instance stored as shared client.")
+        print(f"Gemini Model Factory: GenerativeModel instance for '{model_name}' created.")
         return model
     except Exception as e:
-        msg = f"Gemini Service Error: Failed to configure or get model '{model_name}': {str(e)}"
+        msg = f"Gemini Model Factory Error: Failed to configure or get model '{model_name}': {str(e)}"
         print(f"ERROR: {msg}")
-        if bypass_shared_client: APP_STARTUP_STATUS["gemini_error_details"] = msg
         raise GeminiServiceError(msg)
 
 def check_gemini_service() -> bool:
@@ -166,7 +154,10 @@ def generate_youtube_metadata_from_video_info(recipe_db_id: str, recipe_name_ori
     local_temp_metadata_path = None
 
     try:
-        gdrive_service = gdrive.get_gdrive_service()
+        # Background task should create its own gdrive client instance
+        print("BACKGROUND TASK: Gemini: Creating task-specific GDrive client.")
+        gdrive_service = gdrive.create_gdrive_service()
+
         app_data_folder_id = gdrive.get_or_create_app_data_folder_id(service=gdrive_service)
         if not app_data_folder_id:
             raise GeminiServiceError("Could not get/create GDrive App Data Folder for metadata.")
@@ -194,12 +185,11 @@ def generate_youtube_metadata_from_video_info(recipe_db_id: str, recipe_name_ori
         # print(f"BACKGROUND TASK: Gemini: (Simulated) Using video context from GDrive ID {merged_video_gdrive_id}")
         video_path_context_for_prompt = f"Google Drive File ID: {recipe_data.get('merged_video_gdrive_id', 'N/A')}"
 
-        # Get the shared model instance
-        # The DEFAULT_GEMINI_MODEL_NAME is used by get_gemini_model by default
-        model = get_gemini_model() 
+        # Background task should create its own Gemini model instance
+        print("BACKGROUND TASK: Gemini: Creating task-specific Gemini model.")
+        model = create_gemini_model() # Using the factory function
         if not model:
-            # This case should ideally be caught by startup checks, but as a safeguard:
-            raise GeminiServiceError("Failed to obtain Gemini model instance. Check startup logs.")
+            raise GeminiServiceError("Failed to create Gemini model instance for background task.")
 
         prompt_to_use = custom_prompt_str
         if not prompt_to_use:

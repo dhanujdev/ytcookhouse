@@ -347,9 +347,26 @@ async def reset_recipe_endpoint(request: Request, recipe_db_id: str):
         # Optional: Add logic here to delete local temp files associated with this recipe_db_id
         # This would involve constructing paths based on TEMP_PROCESSING_BASE_DIR and recipe_db_id/name
         # e.g., shutil.rmtree(os.path.join(TEMP_PROCESSING_BASE_DIR, "raw_clips_temp", safe_recipe_name)) etc.
-        # For now, we primarily reset the DB entry.
+    # For now, we primarily reset the DB entry.
     else:
         msg = f"Error:_Could_not_reset_recipe_ID_{recipe_db_id}._It_might_not_exist_in_the_database."
         return RedirectResponse(url=f"/select_folder?error={msg}", status_code=303)
 
     return RedirectResponse(url=f"/select_folder?message={msg}", status_code=303)
+
+
+# --- Admin Route for Hard DB Reset ---
+@router.post("/admin/hard_reset_db", name="hard_reset_db_route")
+async def hard_reset_database_route(request: Request):
+    print("ROUTE /admin/hard_reset_db: Request to HARD RESET entire database.")
+    from utils import hard_reset_db_content # Ensure it's imported
+    
+    try:
+        hard_reset_db_content()
+        msg = "SUCCESS:_Database_has_been_completely_reset_to_its_initial_state."
+        return RedirectResponse(url=f"/select_folder?message={msg}", status_code=303)
+    except Exception as e:
+        print(f"ERROR during hard_reset_db_route: {e}")
+        error_msg = f"Error_during_database_hard_reset:_{str(e)}"
+        # Potentially redirect to an error page or home page if /select_folder also relies on DB being healthy
+        return RedirectResponse(url=f"/?error={error_msg}", status_code=303) # Redirect to home with error

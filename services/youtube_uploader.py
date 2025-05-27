@@ -34,16 +34,9 @@ API_VERSION = 'v3'
 class YouTubeUploaderError(Exception):
     pass
 
-def get_youtube_service(bypass_shared_client=False):
-    """
-    Returns a YouTube API service client.
-    Uses a shared client instance after initial successful creation unless bypass_shared_client is True.
-    """
-    if not bypass_shared_client and YOUTUBE_SERVICE_CLIENT:
-        # print("YouTube Service: Returning shared client.") # Optional: for debugging
-        return YOUTUBE_SERVICE_CLIENT
-
-    print("YouTube Service: Attempting to create new client...")
+def create_youtube_service(): # Renamed and simplified
+    """Creates and returns a new YouTube API service client."""
+    print("YouTube Service Factory: Attempting to create new client...")
     creds = None
     if GOOGLE_AUTH_METHOD == "SERVICE_ACCOUNT_INDIVIDUAL_FIELDS" and GOOGLE_SERVICE_ACCOUNT_INFO:
         print(f"YouTube Auth: Attempting with Service Account (Individual Fields).")
@@ -51,30 +44,21 @@ def get_youtube_service(bypass_shared_client=False):
             creds = ServiceAccountCredentials.from_service_account_info(GOOGLE_SERVICE_ACCOUNT_INFO, scopes=SCOPES_YOUTUBE)
             print(f"YouTube Auth: Successfully obtained credentials via Service Account (Individual Fields).")
         except Exception as e:
-            if bypass_shared_client: APP_STARTUP_STATUS["youtube_error_details"] = f"SA Cred error: {e}"
             raise YouTubeUploaderError(f"YouTube Auth: SA Individual Fields cred error: {e}")
     else: 
         msg = "YouTube Auth: SERVICE_ACCOUNT_INDIVIDUAL_FIELDS method not configured or GOOGLE_SERVICE_ACCOUNT_INFO missing in config.py."
         print(f"ERROR: {msg}")
-        if bypass_shared_client: APP_STARTUP_STATUS["youtube_error_details"] = msg
         raise YouTubeUploaderError(msg)
     
     if not creds: # Safeguard
         msg = "YouTube Auth: Failed to obtain credentials."
-        if bypass_shared_client: APP_STARTUP_STATUS["youtube_error_details"] = msg
         raise YouTubeUploaderError(msg)
 
     try: 
         service = build(API_SERVICE_NAME, API_VERSION, credentials=creds)
-        print(f"YouTube Auth: Service client created successfully.") # Changed from BACKGROUND TASK for clarity
-        
-        if YOUTUBE_SERVICE_CLIENT is None or bypass_shared_client:
-            import config # Import config directly to modify its attributes
-            config.YOUTUBE_SERVICE_CLIENT = service
-            print("YouTube Service: New client stored as shared client.")
+        print(f"YouTube Service Factory: Service client created successfully.")
         return service
     except Exception as e: 
-        if bypass_shared_client: APP_STARTUP_STATUS["youtube_error_details"] = f"Failed to build service: {e}"
         raise YouTubeUploaderError(f"Failed to build YouTube service: {e}")
 
 def check_youtube_service(service_client) -> bool:
@@ -130,7 +114,9 @@ def upload_video_to_youtube(metadata: dict,
         if not merged_video_gdrive_id:
             raise YouTubeUploaderError(f"merged_video_gdrive_id not found in DB for recipe {recipe_db_id_for_status_update}. Cannot upload.")
 
-        gdrive_service = gdrive.get_gdrive_service()
+        # Background task should create its own gdrive client instance
+        print("BACKGROUND TASK: YouTube: Creating task-specific GDrive client.")
+        gdrive_service = gdrive.create_gdrive_service()
         
         # Create a temporary local file for the downloaded video
         temp_video_file = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') # Consider a temp dir from config
@@ -148,7 +134,9 @@ def upload_video_to_youtube(metadata: dict,
         if not metadata.get('title'):
             raise YouTubeUploaderError("Video title missing in metadata.")
 
-        youtube_service = get_youtube_service()
+        # Background task should create its own YouTube client instance
+        print("BACKGROUND TASK: YouTube: Creating task-specific YouTube client.")
+        youtube_service = create_youtube_service() # Using the factory function
 
         # Test API call to list channels
         try:

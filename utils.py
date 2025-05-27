@@ -12,10 +12,12 @@ from config import (
     # ---- Added for DB Caching ----
     CACHED_DB_CONTENT,
     DB_CACHE_TIMESTAMP,
-    DB_CACHE_DURATION_SECONDS
-    # -----------------------------
+    DB_CACHE_DURATION_SECONDS,
+    # ---- Import the shared GDrive client ----
+    GDRIVE_SERVICE_CLIENT
+    # -----------------------------------------
 )
-from services import gdrive # Import the gdrive service
+# from services import gdrive # No longer import the whole module for get_gdrive_service here
 
 # DB_FILE_PATH is no longer a static local path. db.json lives on Google Drive.
 
@@ -37,7 +39,16 @@ def load_db() -> dict:
     # If cache miss or expired, load from Google Drive
     print("UTILS: Attempting to load DB from Google Drive...")
     try:
-        service = gdrive.get_gdrive_service()
+        # Use the shared GDrive client from config
+        if not GDRIVE_SERVICE_CLIENT:
+            print("UTILS: ERROR - Shared GDrive service client not available. Cannot load DB.")
+            # Fallback to a temporary in-memory DB if GDrive client is not initialized
+            return {"recipes": {}, "last_gdrive_scan": None, "gdrive_error": "Shared GDrive client not initialized"}
+        service = GDRIVE_SERVICE_CLIENT 
+        
+        # Since get_or_create_app_data_folder_id is part of gdrive.py, we still need gdrive module for it.
+        # Let's ensure gdrive services is imported for its helper functions.
+        from services import gdrive 
         app_data_folder_id = gdrive.get_or_create_app_data_folder_id(service=service)
         if not app_data_folder_id:
             print("UTILS: ERROR - Could not get/create app data folder on GDrive. Initializing local default DB.")
@@ -81,7 +92,12 @@ def save_db(db_content: dict):
 
     print("UTILS: Attempting to save DB to Google Drive...")
     try:
-        service = gdrive.get_gdrive_service()
+        if not GDRIVE_SERVICE_CLIENT:
+            print("UTILS: ERROR - Shared GDrive service client not available. Cannot save DB.")
+            return # Or raise an error
+        service = GDRIVE_SERVICE_CLIENT
+
+        from services import gdrive # For gdrive.get_or_create_app_data_folder_id etc.
         app_data_folder_id = gdrive.get_or_create_app_data_folder_id(service=service)
         if not app_data_folder_id:
             print("UTILS: ERROR - Could not get/create app data folder on GDrive. DB save failed.")
@@ -207,4 +223,29 @@ if __name__ == '__main__':
     else:
         print("FAILURE: Test update/retrieval issue with GDrive DB.")
     print("GDrive-backed utils.py testing finished.")
+
+def hard_reset_db_content() -> bool:
+    """Resets the entire DB to an initial empty state on Google Drive and clears the cache."""
+    # Ensure global config variables for cache are accessible if not already imported as such
+    # For direct modification, it might be cleaner to import config and use config.VAR
+    # However, if CACHED_DB_CONTENT and DB_CACHE_TIMESTAMP are already treated as module-level globals
+    # that `load_db` and `save_db` modify via `global` keyword, this approach is consistent.
+    # Let's assume they are module globals that can be modified by other functions here.
+    
+    # To be absolutely safe and explicit with global config vars:
+    import config 
+    
+    print("UTILS: Performing HARD RESET of the database.")
+    initial_db = {
+        "recipes": {},
+        "last_gdrive_scan": None
+    }
+    save_db(initial_db) # This will save to GDrive and should update the cache via its own logic
+    
+    # Explicitly set cache to the reset state immediately after save_db call returns.
+    # save_db already updates these, but doing it here ensures it, even if save_db changes.
+    config.CACHED_DB_CONTENT = initial_db 
+    config.DB_CACHE_TIMESTAMP = time.time()
+    print("UTILS: Database hard reset complete. Cache also reset.")
+    return True
 
